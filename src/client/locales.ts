@@ -569,6 +569,7 @@ const TEXT = {
   'reason.no_mention': ['没有点名智能体，且这个来源不接收其余消息', 'Does not address the agent, and this Source does not receive the rest'],
   'reason.admission_ignored': ['准入设为忽略', 'Admission set to ignore'],
   'reason.chat_not_allowed': ['群不在监听的群里', 'Chat is not a listened chat'],
+  'reason.lark_desktop_muted': ['群设了免打扰，且消息没有 @ 或回复本人', 'The chat is muted, and the message neither mentions nor replies to the person'],
   'reason.direct_messages_not_allowed': ['私聊未开放', 'Direct messages are off'],
   'reason.observation_only': ['仅观察的群（旧版过滤）', 'Observe-only chat (legacy filter)'],
   'reason.untracked_source': ['线程未被订阅', 'Thread not subscribed'],

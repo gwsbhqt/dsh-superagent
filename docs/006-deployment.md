@@ -68,6 +68,20 @@ Both presets run with `danger-full-access` as the operator's OS user and read me
 
    Both configurations share the keychain entry for the app secret. To remove only the bot configuration, delete its directory; do not run `lark-cli config remove`, which would affect the shared secret.
 
+### Lark desktop (optional, read-only)
+
+The `lark-desktop` Source reads the operator's own Feishu or Lark desktop client through the `lark-desktop` CLI, which must be on `PATH` or named by an absolute path on the Source's card, with the client running in debug mode. It receives what reaches the operator: every direct message, every message that mentions or replies to them, and the other messages of the chats they did not mute. A message an agent sent as the operator ends with 🤖 and is left out.
+
+It is read-only. It runs `lark-desktop watch` with `--no-ack`, so it adds no status emoji, and it has no Channel, so nothing replies through it. Its messages come from people who are on no allowed list, so they only show on the Source and Trigger pages until a Policy admits them.
+
+Enable the `dsh-superagent-lark-desktop` entry in the profile. A deployment that uses only this Source switches the GitHub Source off, so setup needs no repository or GitHub account:
+
+```sh
+rev=$(curl -s -H 'x-orchestrator-request: 1' $api/settings | jq '.sources[] | select(.id == "github") | .revision')
+curl -s -X PUT -H 'x-orchestrator-request: 1' -H 'content-type: application/json' $api/settings/source:github \
+  -d "{\"value\": {\"enabled\": false, \"config\": {}}, \"revision\": $rev}"
+```
+
 ## Install
 
 Run this block once, on a machine that has no `superagent` profile yet:
