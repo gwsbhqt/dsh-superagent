@@ -7,7 +7,7 @@ import { Store } from '../src/app/store.ts'
 import { sourceContextOf, type SourceContextDeps } from '../src/app/source-context.ts'
 import { Commands } from '../src/infra/commands.ts'
 import { HealthBoard } from '../src/infra/health.ts'
-import { SettingsSchema, settingsPolicy } from '../src/policy.ts'
+import { SettingsSchema, anyoneAdmitted, settingsPolicy } from '../src/policy.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
 import { AGENT_MARK, JevBatcher, httpJev, jevBatch, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, runLarkDesktop,
   storedMessage, withJev, type JevAsk } from '../src/sources/lark-desktop.ts'
@@ -60,6 +60,27 @@ describe('lark-desktop messages', () => {
     expect(storedMessage({ message: { id: 'm-2', chat_id: 'chat-1', chat_kind: 'group', parent_id: 'm-1', text: 'body' }, context: [] }))
       .toMatchObject({ message_id: 'm-2', reply_to: 'm-1', text: 'body' })
     expect(() => storedMessage({ context: [] })).toThrow()
+  })
+})
+
+describe('acting for the person alone', () => {
+  it('names an admission row for each part of what the Source receives', () => {
+    expect(larkDesktopKind.policy!.rows!({}).map(row => row.id)).toEqual(['direct', 'mentions', 'chats'])
+    const rows = new Set([larkScope({ direct: true }), larkScope({ mentioned: true }), larkScope({})].map(scope => scope.listened ? scope.row : ''))
+    expect(rows).toEqual(new Set(['direct', 'mentions', 'chats']))
+  })
+  it('with no list, makes what reaches the person an inferred candidate, bots too, and leaves the rest of the chats alone', () => {
+    const settings = SettingsSchema.parse({ eval: { mode: 'observe' }, sources: { 'lark-desktop': { enabled: true, config: {} } },
+      policy: { rules: [], sources: { 'lark-desktop': { admission: { direct: { unlistedAddressed: 'inferred' }, mentions: { unlistedAddressed: 'inferred' } } } } } })
+    const sources = new SourceRegistry(() => settings, new HealthBoard())
+    sources.register(larkDesktopKind)
+    const policy = settingsPolicy(settings, sources)
+    const thread = { key: 'lark-desktop:x', ref: { source: 'lark-desktop', id: 'x' }, subscriptions: [], queued: [], decisions: [] } as never
+    const gate = (overrides: Record<string, unknown>) => policy.gate(larkTrigger(line(overrides), false)!, thread, [])
+    expect(gate({ chat_kind: 'direct', sender_is_bot: true })).toMatchObject({ admissible: true, strength: 'inferred', basis: { via: 'admission', row: 'direct' } })
+    expect(gate({ reply_to: 'm-0', addressed_to_me: true })).toMatchObject({ admissible: true, strength: 'inferred', basis: { row: 'mentions' } })
+    expect(gate({})).toMatchObject({ admissible: false })
+    expect(anyoneAdmitted(settings)).toBe(true)
   })
 })
 

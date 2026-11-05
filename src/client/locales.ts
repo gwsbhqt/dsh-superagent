@@ -137,7 +137,7 @@ const TEXT = {
   flowJudgedLabel: ['已评估', 'Evaluated'],
   flowAcceptedLabel: ['接单或续做', 'Accepted or continued'],
   idleLabel: ['等待新触发', 'Waiting for a Trigger'],
-  problemNoAllowed: ['没有人能发起工作：各来源上的名单都为空，任何请求都不会成为工单', 'No one may originate work: the lists on every Source are empty, so no request can become a Ticket'],
+  problemNoAllowed: ['没有消息能发起工作：各来源的名单都为空，准入表也没有放行名单外的消息', 'No message may originate work: the lists on every Source are empty, and no admission table admits a sender not on them'],
   actionAddAllowed: ['去添加', 'Add senders'],
   'problemSetupFix.github': ['在设置 › 来源的 GitHub 卡片修正后保存，会重新检查；在 dsh-superagent 之外修复的（例如登录 CLI），点“重新检查”。', 'Fix it on the GitHub card of the Source settings and save to check again; after a fix outside dsh-superagent, such as signing a CLI in, choose Check again.'],
   'problemSetupFix.feishu': ['在设置 › 来源的飞书卡片修正后保存，会重新检查；在 dsh-superagent 之外修复的（例如配置机器人），点“重新检查”。', 'Fix it on the Feishu card of the Source settings and save to check again; after a fix outside dsh-superagent, such as configuring the bot, choose Check again.'],

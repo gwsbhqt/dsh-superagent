@@ -124,7 +124,13 @@ export function listedBot(settings: Settings, actor: ActorRef): z.infer<typeof A
   const bots = z.array(AllowedSchema).catch([]).parse(settings.policy.sources[actor.source]?.bots ?? [])
   return bots.find(entry => sameName(entry.id, actor.id))
 }
-export const anyoneAllowed = (settings: Settings): boolean => Object.values(settings.policy.sources).some(part => part.allowed.length > 0)
+/**
+ * Whether any message may reach Eval as a request or a candidate: a Source's part allows someone or lists a bot, or its admission
+ * table admits a sender not on the list. A listed-sender cell admits no one while the list is empty.
+ */
+export const anyoneAdmitted = (settings: Settings): boolean => Object.values(settings.policy.sources).some(part =>
+  part.allowed.length > 0 || (Array.isArray(part.bots) && part.bots.length > 0)
+  || Object.values(part.admission).some(row => [row.unlistedAddressed, row.unlistedUnaddressed].some(cell => cell !== undefined && cell !== 'ignore')))
 const senderName = (entry: z.infer<typeof AllowedSchema>): string => entry.name || entry.id
 
 /** Check whether a thread has tickets of its own (excluding context-only subscriptions). */
@@ -167,10 +173,12 @@ export function policyEffects(tickets: readonly Ticket[], old: Settings, now: Se
 export function settingsPolicy(settings: Settings, sources: SourceScope): Policy {
   const version = policyVersion(settings)
   const mode = settings.eval.mode
-  /** Gate non-human triggers: only listed bots (as inferred candidates) and senderless system/CI events may pass; other bots are rejected. */
+  /**
+   * Gate non-human triggers, which are inferred candidates at most: a listed bot where its message is received, any other bot by
+   * the admission table's cell for a sender not on the list, as a person would be, and senderless system/CI events by their row.
+   */
   const machineGate = (trigger: Trigger): GateResult => {
     const bot = trigger.actor.id ? listedBot(settings, trigger.actor) : undefined
-    if (trigger.actor.id && !bot) return { admissible: false, reason: 'not_human' }
     const scope = listened(sources, trigger.source, trigger.meta)
     if (!scope.listened || !(trigger.addressed || scope.observed)) return { admissible: false, reason: 'not_human' }
     const recorded = { source: trigger.source, scope: trigger.meta, ...scope.row === undefined ? {} : { row: scope.row } }
@@ -179,6 +187,12 @@ export function settingsPolicy(settings: Settings, sources: SourceScope): Policy
       if (mode === 'off') return { admissible: false, reason: 'admission_ignored' }
       const basis = { ...recorded, via: 'bot' as const, sender: senderName(bot), ...addressed, observation: { mode } }
       return { admissible: true, strength: 'inferred', basis }
+    }
+    if (trigger.actor.id) {
+      // A bot no list names takes the cell of a sender not on the list; a cell set to explicit still makes a bot no explicit request.
+      const cell = trigger.addressed ? 'unlistedAddressed' as const : 'unlistedUnaddressed' as const
+      if (admissionOf(settings, trigger.source, scope.row, cell) === 'ignore' || mode === 'off') return { admissible: false, reason: 'not_human' }
+      return { admissible: true, strength: 'inferred', basis: { ...recorded, via: 'admission', cell, ...addressed, observation: { mode } } }
     }
     const cell = 'unlistedUnaddressed' as const
     if (admissionOf(settings, trigger.source, scope.row, cell) !== 'inferred' || mode === 'off') {

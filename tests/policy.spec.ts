@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SettingsSchema, assessmentOutcome, policyEffects, settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
+import { SettingsSchema, assessmentOutcome, policyEffects, settingsPolicy, policyVersion, allowedSender, anyoneAdmitted, type Settings } from '../src/policy.ts'
 import type { MandateBasis } from '../src/core/index.ts'
 import { migrateSettings } from '../src/app/migration.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
@@ -61,8 +61,12 @@ describe('gate', () => {
     expect(policy.gate(github(MEMBER, 'mention'), thread(), [])).toEqual({ admissible: false, reason: 'not_a_member' })
     expect(allowedSender(base, { source: 'github', id: 'ALICE' })).toEqual({ id: 'Alice' })
     expect(allowedSender(base, { source: 'feishu', id: 'Alice' })).toBeUndefined()
-    expect(anyoneAllowed(base)).toBe(true)
-    expect(anyoneAllowed(SettingsSchema.parse({}))).toBe(false)
+    expect(anyoneAdmitted(base)).toBe(true)
+    expect(anyoneAdmitted(SettingsSchema.parse({}))).toBe(false)
+    // With no list, a table that admits senders not on the list, or a listed bot, still lets messages reach Eval; a listed-sender cell does not.
+    const only = (part: Record<string, unknown>) => anyoneAdmitted(SettingsSchema.parse({ policy: { sources: { feishu: part } } }))
+    expect([only({ admission: { direct: { unlistedAddressed: 'inferred' } } }), only({ bots: [{ id: 'cli_alerts' }] }),
+      only({ admission: { direct: { listedUnaddressed: 'inferred', unlistedAddressed: 'ignore' } } })]).toEqual([true, true, false])
   })
   it('assesses follow-ups on Threads with Tickets, explicit from an allowed sender and inferred from anyone else', () => {
     const quiet = { meta: { chatId: CHAT, direct: false, mentioned: false } }
@@ -429,6 +433,21 @@ describe('bots and events without a sender', () => {
     expect(setup(observing({})).policy.gate(comment, thread(), [])).toEqual({ admissible: false, reason: 'not_human' })
     expect(setup(observing({ observeComments: true }, {}, 'off')).policy.gate(comment, thread(), [])).toEqual({ admissible: false,
       reason: 'admission_ignored' })
+  })
+  it('admits a bot no list names by the admission table, as a sender not on the list, and never as an explicit request', () => {
+    const renovate = { ...comment, actor: { source: 'github', id: 'renovate[bot]' } }
+    const table = (cell: string, value: string) => ({ admission: { comments: { [cell]: value } } })
+    expect(setup(observing({ observeComments: true }, table('unlistedUnaddressed', 'inferred'))).policy.gate(renovate, thread(), []))
+      .toMatchObject({ admissible: true, strength: 'inferred', basis: { via: 'admission', cell: 'unlistedUnaddressed', row: 'comments', observation: { mode: 'auto' } } })
+    expect(setup(observing({ observeComments: true }, table('unlistedAddressed', 'explicit'))).policy.gate({ ...renovate, addressed: 'mention' }, thread(), []))
+      .toMatchObject({ admissible: true, strength: 'inferred', basis: { via: 'admission', cell: 'unlistedAddressed', addressed: 'mention' } })
+    expect(setup(observing({ observeComments: true }, table('unlistedUnaddressed', 'inferred'), 'off')).policy.gate(renovate, thread(), []))
+      .toEqual({ admissible: false, reason: 'not_human' })
+    // Its Mandate holds while the cell still admits it, as a person's does.
+    const settings = observing({ observeComments: true }, table('unlistedUnaddressed', 'inferred'))
+    const mandate = { strength: 'inferred' as const, policyVersion: '', actor: renovate.actor, scope: '',
+      basis: { via: 'admission' as const, cell: 'unlistedUnaddressed' as const, source: 'github', scope: renovate.meta, row: 'comments', observation: { mode: 'auto' as const } } }
+    expect([setup(settings).policy.revalidate(mandate), setup(observing({ observeComments: true })).policy.revalidate(mandate)]).toEqual([true, false])
   })
   it('keeps a bot candidate\'s Mandate while the bot stays on its list and candidates may become work', () => {
     const settings = observing({ observeComments: true })

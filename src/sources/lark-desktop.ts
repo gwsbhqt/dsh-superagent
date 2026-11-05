@@ -48,6 +48,32 @@ export const larkDesktopKind: SourceKind<LarkDesktopConfig> = {
   ],
   health: [SOURCE],
   scope: ({ meta }) => larkScope(meta),
+  policy: {
+    unnamed: { person: { zh: '飞书用户', en: 'Feishu user' }, bot: { zh: '飞书机器人', en: 'Feishu bot' } },
+    schema: z.object({
+      allowed: z.array(z.object({ id: z.string().regex(/^\d+$/), name: z.string().trim().max(100).optional() }).strict())
+        .refine(users => new Set(users.map(user => user.id)).size === users.length, 'Duplicate user ids').default([]),
+      bots: z.array(z.object({ id: z.string().regex(/^\d+$/), name: z.string().trim().max(100).optional() }).strict())
+        .refine(bots => new Set(bots.map(bot => bot.id)).size === bots.length, 'Duplicate bot ids').optional(),
+    }).strict(),
+    fields: [
+      { key: 'allowed', type: 'rows', label: { zh: '能发起工作的人', en: 'People who may originate work' },
+        hint: { zh: '他们找本人的消息是明确的请求。只替本人做事时可以留空：名单外的人找本人，按下面的准入表交给评估。', en: 'Their messages to the person are explicit requests. Acting for the person alone, leave it empty: people not on it who reach the person go to Eval by the admission table below.' },
+        columns: [{ key: 'id', type: 'text', label: { zh: '用户编号', en: 'User id' }, pattern: '[0-9]+' }, { key: 'name', type: 'text', label: { zh: '名字', en: 'Name' }, optional: true }] },
+      { key: 'bots', type: 'rows', label: { zh: '消息总能成为候选的机器人', en: 'Bots whose messages may always become candidates' },
+        hint: { zh: '名单里的机器人在接收范围里的消息都成为推断的候选；不在名单上的机器人按准入表里“名单外”的格子处理。', en: 'Every received message of a bot on this list becomes an inferred candidate; any other bot takes the admission table\'s cells for senders not on the list.' },
+        columns: [{ key: 'id', type: 'text', label: { zh: '机器人编号', en: 'Bot id' }, pattern: '[0-9]+' }, { key: 'name', type: 'text', label: { zh: '名字', en: 'Name' }, optional: true }] },
+    ],
+    explicit: { zh: '私聊本人，或在群里 @、回复、加急本人', en: 'A direct message to the person, or a group message that mentions, replies to or urgently calls them' },
+    rows: () => [
+      { id: 'direct', label: { zh: '私聊', en: 'Direct messages' }, note: { zh: '全部接收', en: 'All received' },
+        cells: { listedUnaddressed: false, unlistedAddressed: true, unlistedUnaddressed: false } },
+      { id: 'mentions', label: { zh: '群里找本人的消息', en: 'Group messages to the person' }, note: { zh: '@、回复、加急本人', en: 'Mentions, replies and urgent calls' },
+        cells: { listedUnaddressed: false, unlistedAddressed: true, unlistedUnaddressed: false } },
+      { id: 'chats', label: { zh: '没设免打扰的群', en: 'Chats not muted' }, note: { zh: '群里其余的消息', en: 'Their other messages' },
+        cells: { listedUnaddressed: true, unlistedAddressed: false, unlistedUnaddressed: true } },
+    ],
+  },
 }
 
 /** How often the Source rereads which chats the person muted. */
