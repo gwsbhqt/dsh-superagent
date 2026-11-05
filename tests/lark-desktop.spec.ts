@@ -31,8 +31,21 @@ describe('lark-desktop messages', () => {
     expect(larkTrigger(line({ recalled: true }), false)).toBeUndefined()
     expect(larkTrigger(line({ text: `done ${AGENT_MARK}\n` }), false)).toBeUndefined()
   })
-  it('put a topic, or a message and the replies to it, in one Thread', () => {
-    expect(larkThreadId(line({ thread_id: 't-1', reply_to: 'm-0' }))).toBe('chat-1:t-1')
+  it('take an urgent call to the person as addressing them, even in a muted chat, as a new Trigger of the same message', () => {
+    const urgent = larkTrigger(line({ urgent: true, urgent_to_me: true, urgent_type: 'phone', urgent_at: 5 }), true)!
+    expect(urgent).toMatchObject({ id: larkTriggerId('m-1', 5), addressed: 'mention', meta: { mentioned: true, muted: true, urgent: true, urgentType: 'phone' } })
+    expect(urgent.id).not.toBe(larkTriggerId('m-1'))
+    expect([larkScope(urgent.meta), needsJev(urgent)]).toEqual([{ listened: true, observed: false, row: 'mentions' }, false])
+    // Marked urgent for someone else: it addresses no one here.
+    expect(larkTrigger(line({ urgent: true }), false)).toMatchObject({ id: larkTriggerId('m-1'), meta: { mentioned: false } })
+  })
+  it('take whether the chat is muted from the message, and from the chat list only when the message does not say', () => {
+    expect([larkTrigger(line({ muted: true }), false)!.meta.muted, larkTrigger(line({ muted: false }), true)!.meta.muted,
+      larkTrigger(line({ muted: null }), true)!.meta.muted]).toEqual([true, false, true])
+  })
+  it('put a topic, or a reply chain from its first message, in one Thread', () => {
+    expect(larkThreadId(line({ thread_id: 't-1', root_id: 'm-r', reply_to: 'm-0' }))).toBe('chat-1:t-1')
+    expect(larkThreadId(line({ root_id: 'm-r', reply_to: 'm-0' }))).toBe('chat-1:m-r')
     expect(larkThreadId(line({ reply_to: 'm-0' }))).toBe('chat-1:m-0')
     expect(larkThreadId(line())).toBe('chat-1:m-1')
   })
@@ -136,6 +149,8 @@ esac
     const lines = [line({ message_id: 'm-dm', chat_id: 'dm-1', chat_kind: 'direct' }), line({ message_id: 'm-at', chat_id: 'chat-muted', is_at_me: true }),
       line({ message_id: 'm-muted', chat_id: 'chat-muted' }), line({ message_id: 'm-open', chat_id: 'chat-open' }),
       line({ message_id: 'm-mine', chat_id: 'chat-open', text: `on it ${AGENT_MARK}` }), { message_id: 'm-expired', body_expired: true },
+      // The muted message again, once someone urgently called the person on it.
+      line({ message_id: 'm-muted', chat_id: 'chat-muted', urgent: true, urgent_to_me: true, addressed_to_me: true, urgent_type: 'app', urgent_at: 7 }),
       { event: 'stale_lamp', message_id: 'm-open' }, { event: 'problem', kind: 'push_missing', detail: 'no push for a while' }]
     writeFileSync(join(dir, 'events'), lines.map(item => JSON.stringify(item)).join('\n') + '\n')
     const { ctx, health, store } = source(cli())
@@ -144,6 +159,8 @@ esac
     const got = (id: string) => store.triggers.get(larkTriggerId(id))
     expect([got('m-dm')?.addressed, got('m-at')?.addressed, got('m-open')?.addressed]).toEqual(['direct', 'mention', undefined])
     expect(store.triggers.disposition(larkTriggerId('m-muted'))?.filtered).toMatchObject({ code: 'lark_desktop_muted' })
+    expect(store.triggers.get(larkTriggerId('m-muted', 7))).toMatchObject({ addressed: 'mention', meta: { urgent: true, urgentType: 'app' } })
+    expect(store.triggers.disposition(larkTriggerId('m-muted', 7))?.filtered).toBeUndefined()
     expect(got('m-open')?.meta.muted).toBe(false)
     expect(got('m-mine')).toBeUndefined()
     expect(got('m-expired')).toMatchObject({ text: 'read again', threads: [{ id: 'chat-open:m-root' }] })

@@ -70,7 +70,7 @@ Both presets run with `danger-full-access` as the operator's OS user and read me
 
 ### Lark desktop (optional, read-only)
 
-The `lark-desktop` Source reads the operator's own Feishu or Lark desktop client through the `lark-desktop` CLI, which must be on `PATH` or named by an absolute path on the Source's card, with the client running in debug mode. It receives what reaches the operator: every direct message, every message that mentions or replies to them, and the other messages of the chats they did not mute. A message an agent sent as the operator ends with 🤖 and is left out.
+The `lark-desktop` Source reads the operator's own Feishu or Lark desktop client through the `lark-desktop` CLI, which must be on `PATH` or named by an absolute path on the Source's card, with the client running in debug mode. It receives what reaches the operator: every direct message, every message that mentions, replies to or urgently calls them, and the other messages of the chats they did not mute. An urgent call on a message that arrived earlier is a new Trigger of that message, even in a muted chat. A message an agent sent as the operator ends with 🤖 and is left out.
 
 Before a chat message that addresses no one is received, Jev, a small model that answers a batch of yes-or-no questions in one request, can score whether the operator needs it. The card's Jev setting chooses Off, Score only, the default, which records the score in the Trigger's `meta.jev`, or Filter, which leaves out a message below the threshold with the reason that Jev judged it unneeded. Its key is the `TYPESAFE_API_KEY` reference of DeepSeek Harness's credentials file. Direct messages, mentions and replies never go to Jev, and a batch Jev fails on is received unscored.
 

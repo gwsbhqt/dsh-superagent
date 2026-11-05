@@ -375,7 +375,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/feishu-read.ts` | The `feishu/` reads of a Trigger's message, its root, parent and topic, and `feishuThreadContext`, which gives them to assessments with their images |
 | `src/sources/admission-context.ts` | The bounded window an assessment starts from: the first pages of a Trigger's Thread, read through its kind, and the messages around the Trigger |
 | `src/sources/feishu-image.ts` | Reads a Feishu message's image as an attachment for the assessing Session |
-| `src/sources/lark-desktop-trigger.ts` | lark-desktop messages as Triggers: the watch line's shape, the Thread of a message, the mark of messages an agent sent as the person, and `larkScope`, which leaves out a muted chat's messages that neither mention nor reply to the person |
+| `src/sources/lark-desktop-trigger.ts` | lark-desktop messages as Triggers: the watch line's shape, the Thread of a message, the mark of messages an agent sent as the person, the Trigger an urgent call to the person adds to a message, and `larkScope`, which leaves out a muted chat's messages that neither mention, reply to nor urgently call the person |
 | `src/sources/lark-desktop.ts` | The lark-desktop kind and plugin entry, exported as `./lark-desktop-watch`: a read-only `lark-desktop watch` with no status emoji, and the muted chats it rereads every five minutes |
 | `src/sources/lark-desktop-jev.ts` | Layer one of the lark-desktop Source: `jevBatch` and `JevBatcher` ask Jev, in batches, whether the person needs each message that addresses no one; a failed batch lets its messages through unscored |
 | `src/client/index.tsx` | The client plugin entry: the sidebar entry, the main panel and the page in DeepSeek Harness's Plugin Manager |

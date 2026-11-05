@@ -16,7 +16,8 @@ export const WatchedMessageSchema = z.looseObject({
   sender_is_bot: z.boolean().nullish(), sent_at: z.number().nullish(), text: z.string().nullish(),
   thread_id: z.string().nullish(), reply_to: z.string().nullish(), is_at_me: z.boolean().nullish(),
   addressed_to_me: z.boolean().nullish(), mentions: z.array(z.string()).nullish(), recalled: z.boolean().nullish(),
-  media: z.array(z.unknown()).nullish(),
+  media: z.array(z.unknown()).nullish(), muted: z.boolean().nullish(), root_id: z.string().nullish(),
+  urgent: z.boolean().nullish(), urgent_to_me: z.boolean().nullish(), urgent_type: z.string().nullish(), urgent_at: z.number().nullish(),
 })
 export type WatchedMessage = z.infer<typeof WatchedMessageSchema>
 /** A line of `lark-desktop watch` for a message whose body expired before it was read; `lark-desktop message` reads it again. */
@@ -31,30 +32,39 @@ export function storedMessage(output: unknown): WatchedMessage {
   return WatchedMessageSchema.parse({ ...rest, message_id: id, ...parent ? { reply_to: parent } : {} })
 }
 
-/** A Thread is a topic, or a message and the direct replies to it, in one chat. */
-export const larkThreadId = (message: Pick<WatchedMessage, 'chat_id' | 'thread_id' | 'reply_to' | 'message_id'>): string =>
-  `${message.chat_id}:${message.thread_id || message.reply_to || message.message_id}`
-export const larkTriggerId = (messageId: string): string => key(SOURCE, messageId)
+/** A Thread is a topic, or a reply chain from its first message, in one chat; lark-desktop before `root_id` gives only the replied-to message. */
+export const larkThreadId = (message: Pick<WatchedMessage, 'chat_id' | 'thread_id' | 'root_id' | 'reply_to' | 'message_id'>): string =>
+  `${message.chat_id}:${message.thread_id || message.root_id || message.reply_to || message.message_id}`
+/**
+ * The Trigger of a message, and a new one when someone urgently calls the person on it: lark-desktop pushes such a message
+ * again, often long after it first arrived, and the urgent call is a new event, as an edit is on GitHub.
+ */
+export const larkTriggerId = (messageId: string, urgentAt?: number | null): string =>
+  urgentAt === undefined || urgentAt === null ? key(SOURCE, messageId) : key(SOURCE, messageId, 'urgent', String(urgentAt))
 
 /**
- * The Trigger of one message, or none for a recalled message and one an agent sent as the person. `muted` says whether the
- * person muted the chat when the message arrived; the Source's scope reads it from `meta`.
+ * The Trigger of one message, or none for a recalled message and one an agent sent as the person. Whether the person muted
+ * the chat comes with the message, or else from `muted`, what the chat list said; the Source's scope reads it from `meta`.
+ * An urgent call to the person addresses them, as a mention does.
  */
 export function larkTrigger(message: WatchedMessage, muted: boolean, now: () => number = Date.now): Trigger | undefined {
   const text = message.text ?? ''
   if (message.recalled || text.trimEnd().endsWith(AGENT_MARK)) return undefined
   const direct = message.chat_kind === 'direct'
-  const mentioned = !direct && (message.is_at_me === true || message.addressed_to_me === true)
+  const urgent = message.urgent_to_me === true
+  const mentioned = !direct && (message.is_at_me === true || message.addressed_to_me === true || urgent)
   return {
-    id: larkTriggerId(message.message_id), source: SOURCE, threads: [{ source: SOURCE, id: larkThreadId(message) }],
+    id: larkTriggerId(message.message_id, urgent ? message.urgent_at ?? 0 : undefined), source: SOURCE, threads: [{ source: SOURCE, id: larkThreadId(message) }],
     actor: { source: SOURCE, id: message.sender_id ?? '' },
     human: !!message.sender_id && message.sender_is_bot !== true,
     ...(direct ? { addressed: 'direct' as const } : mentioned ? { addressed: 'mention' as const } : {}),
     at: new Date(message.sent_at ?? now()).toISOString(), text,
     meta: {
-      chatId: message.chat_id, messageId: message.message_id, direct, mentioned, muted,
+      chatId: message.chat_id, messageId: message.message_id, direct, mentioned, muted: message.muted ?? muted,
+      ...(urgent ? { urgent: true, ...(message.urgent_type ? { urgentType: message.urgent_type } : {}) } : {}),
       ...(message.chat_name ? { chatName: message.chat_name } : {}), ...(message.sender_name ? { senderName: message.sender_name } : {}),
-      ...(message.thread_id ? { threadId: message.thread_id } : {}), ...(message.reply_to ? { replyTo: message.reply_to } : {}),
+      ...(message.thread_id ? { threadId: message.thread_id } : {}), ...(message.root_id ? { rootId: message.root_id } : {}),
+      ...(message.reply_to ? { replyTo: message.reply_to } : {}),
       ...(message.media?.length ? { media: true } : {}),
     },
   }
