@@ -59,14 +59,25 @@ export function larkTrigger(message: WatchedMessage, muted: boolean, now: () => 
     },
   }
 }
+/** Whether a message goes to Jev: one that neither addresses the person nor comes from a muted chat, which the scope leaves out anyway. */
+export const needsJev = (trigger: Trigger): boolean => trigger.meta.direct !== true && trigger.meta.mentioned !== true && trigger.meta.muted !== true
+/**
+ * Records Jev's probability that the person needs a message, and with `minimum` (a percentage) whether it falls below it,
+ * which the scope then leaves out. The verdict is kept in `meta` so a later change of the threshold does not change what was received.
+ */
+export function withJev(trigger: Trigger, score: number, minimum?: number): Trigger {
+  const dropped = minimum !== undefined && score * 100 < minimum
+  return { ...trigger, meta: { ...trigger.meta, jev: Math.round(score * 1000) / 1000, ...(dropped ? { jevDropped: true } : {}) } }
+}
 
 /**
  * What the Source receives: every direct message and every message that mentions or replies to the person, and the other
- * messages of a chat only while the person has not muted it.
+ * messages of a chat only while the person has not muted it and Jev, when it filters, did not judge them unneeded.
  */
 export function larkScope(meta: Record<string, unknown>): ScopeResult {
   if (meta.direct === true) return { listened: true, observed: true, row: 'direct' }
   if (meta.mentioned === true) return { listened: true, observed: false, row: 'mentions' }
   if (meta.muted === true) return { listened: false, reason: 'lark_desktop_muted' }
+  if (meta.jevDropped === true) return { listened: false, reason: 'lark_desktop_jev' }
   return { listened: true, observed: true, row: 'chats' }
 }

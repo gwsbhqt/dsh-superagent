@@ -377,6 +377,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/feishu-image.ts` | Reads a Feishu message's image as an attachment for the assessing Session |
 | `src/sources/lark-desktop-trigger.ts` | lark-desktop messages as Triggers: the watch line's shape, the Thread of a message, the mark of messages an agent sent as the person, and `larkScope`, which leaves out a muted chat's messages that neither mention nor reply to the person |
 | `src/sources/lark-desktop.ts` | The lark-desktop kind and plugin entry, exported as `./lark-desktop-watch`: a read-only `lark-desktop watch` with no status emoji, and the muted chats it rereads every five minutes |
+| `src/sources/lark-desktop-jev.ts` | Layer one of the lark-desktop Source: `jevBatch` and `JevBatcher` ask Jev, in batches, whether the person needs each message that addresses no one; a failed batch lets its messages through unscored |
 | `src/client/index.tsx` | The client plugin entry: the sidebar entry, the main panel and the page in DeepSeek Harness's Plugin Manager |
 | `src/client/app.tsx` | The panel: header, search, glossary, tabs and the page of the current route |
 | `src/client/provider.tsx` | What every page reads from its host: copy, calls, navigation, notices, the state poll, and `restart`, which reads the state quickly while dsh-superagent restarts |

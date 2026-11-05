@@ -9,8 +9,8 @@ import { Commands } from '../src/infra/commands.ts'
 import { HealthBoard } from '../src/infra/health.ts'
 import { SettingsSchema, settingsPolicy } from '../src/policy.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
-import { AGENT_MARK, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, runLarkDesktop, storedMessage }
-  from '../src/sources/lark-desktop.ts'
+import { AGENT_MARK, JevBatcher, httpJev, jevBatch, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, runLarkDesktop,
+  storedMessage, withJev, type JevAsk } from '../src/sources/lark-desktop.ts'
 import { testDeployment } from './fixtures/deployment.ts'
 
 /** A message as `lark-desktop watch` prints it; the names and ids are made up. */
@@ -50,6 +50,47 @@ describe('lark-desktop messages', () => {
   })
 })
 
+describe('Jev, layer one', () => {
+  it('asks only about messages that neither address the person nor come from a muted chat', () => {
+    expect([needsJev(larkTrigger(line(), false)!), needsJev(larkTrigger(line({ chat_kind: 'direct' }), false)!),
+      needsJev(larkTrigger(line({ is_at_me: true }), false)!), needsJev(larkTrigger(line(), true)!)]).toEqual([true, false, false, false])
+  })
+  it('keeps its score, and leaves out a message below the threshold only when it filters', () => {
+    const trigger = larkTrigger(line(), false)!
+    expect(withJev(trigger, 0.1234).meta).toMatchObject({ jev: 0.123 })
+    expect(larkScope(withJev(trigger, 0.1234).meta)).toMatchObject({ listened: true })
+    expect(larkScope(withJev(trigger, 0.2, 50).meta)).toEqual({ listened: false, reason: 'lark_desktop_jev' })
+    expect(larkScope(withJev(trigger, 0.8, 50).meta)).toMatchObject({ listened: true })
+  })
+  it('asks one question per message about whether the person needs it, with the messages as the state', () => {
+    const { state, questions } = jevBatch([line(), line({ message_id: 'm-2', sender_is_bot: true, text: 'x'.repeat(5000) })])
+    expect(Object.keys(questions)).toEqual(['m0', 'm1'])
+    expect(questions.m1).toMatchObject({ type: 'noul', instructions: expect.stringContaining('第 2 条') })
+    expect((state as { messages: { bot: boolean; text: string }[] }).messages.map(item => [item.bot, item.text.length])).toEqual([[false, 18], [true, 1000]])
+  })
+  it('asks once for a batch, and lets every message of a failed batch or a missing answer through unscored', async () => {
+    const ask = vi.fn<JevAsk>(async (_state, questions) => Object.fromEntries(Object.keys(questions).slice(0, 1).map(id => [id, 0.9])))
+    const failed = vi.fn()
+    const batcher = new JevBatcher(ask, new AbortController().signal, failed)
+    const scores = Promise.all([batcher.score(line()), batcher.score(line({ message_id: 'm-2' }))])
+    await batcher.flush()
+    expect(await scores).toEqual([0.9, undefined])
+    expect(ask).toHaveBeenCalledTimes(1)
+    const broken = new JevBatcher(async () => { throw new Error('offline') }, new AbortController().signal, failed)
+    const lost = broken.score(line()); await broken.flush()
+    expect([await lost, failed.mock.calls.at(-1)?.[0]?.message]).toEqual([undefined, 'offline'])
+  })
+  it('sends the key to Jev, and names a missing key or a refusal', async () => {
+    const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => new Response(JSON.stringify({ answers: { m0: { type: 'noul', noul: 0.7 }, m1: {} } }),
+      { status: (init?.headers as Record<string, string>).authorization === 'Bearer k' ? 200 : 403 }))
+    const signal = new AbortController().signal
+    expect(await httpJev(async () => 'k', fetcher as typeof fetch)({}, {}, signal)).toEqual({ m0: 0.7 })
+    expect(JSON.parse(String(fetcher.mock.calls[0]![1]!.body))).toMatchObject({ model: 'jev-latest', state: {}, questions: {} })
+    await expect(httpJev(async () => undefined, fetcher as typeof fetch)({}, {}, signal)).rejects.toThrow('no TYPESAFE_API_KEY')
+    await expect(httpJev(async () => 'wrong', fetcher as typeof fetch)({}, {}, signal)).rejects.toThrow('HTTP 403')
+  })
+})
+
 describe('lark-desktop watch', () => {
   let dir: string
   let controller: AbortController
@@ -76,9 +117,9 @@ esac
 `, { mode: 0o755 })
     return path
   }
-  function source(path: string) {
+  function source(path: string, config: Record<string, unknown> = {}) {
     const store = new Store(join(dir, 'db.sqlite'))
-    store.saveSettings(SettingsSchema.parse({ sources: { 'lark-desktop': { enabled: true, config: { cli: path } } } }))
+    store.saveSettings(SettingsSchema.parse({ sources: { 'lark-desktop': { enabled: true, config: { cli: path, ...config } } } }))
     const board = new HealthBoard()
     const sources = new SourceRegistry(() => store.settings(), board)
     sources.register(larkDesktopKind)
@@ -109,6 +150,25 @@ esac
     // Read-only: it lists the chats, subscribes without status emoji, and reads one message; it writes nothing.
     const calls = readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n')
     expect(calls).toEqual(['chats --all', 'watch dsh-superagent --scope others --no-ack', 'message m-expired --no-parent'])
+    controller.abort(); await running; store.close()
+  }, 20_000)
+  it('scores the chat messages that address no one with Jev, and leaves out the low ones only while it filters', async () => {
+    writeFileSync(join(dir, 'events'), [line({ message_id: 'm-dm', chat_id: 'dm-1', chat_kind: 'direct' }), line({ message_id: 'm-low', chat_id: 'chat-open' }),
+      line({ message_id: 'm-high', chat_id: 'chat-open', text: 'the build is red' })].map(item => JSON.stringify(item)).join('\n') + '\n')
+    const asked: string[] = []
+    const jev: JevAsk = async state => {
+      const texts = (state as { messages: { text: string }[] }).messages.map(item => item.text)
+      asked.push(...texts)
+      return Object.fromEntries(texts.map((text, index) => [`m${index}`, text.includes('red') ? 0.9 : 0.1]))
+    }
+    const { ctx, store } = source(cli(), { jev: 'filter', jevMinimum: 50 })
+    running = runLarkDesktop(ctx, controller.signal, { jev })
+    await vi.waitFor(() => expect(store.triggers.get(larkTriggerId('m-high'))).toBeDefined(), until)
+    expect(store.triggers.get(larkTriggerId('m-high'))?.meta).toMatchObject({ jev: 0.9 })
+    expect(store.triggers.disposition(larkTriggerId('m-low'))?.filtered).toMatchObject({ code: 'lark_desktop_jev' })
+    // The direct message never went to Jev.
+    expect(store.triggers.get(larkTriggerId('m-dm'))?.meta).not.toHaveProperty('jev')
+    expect(asked).toEqual(['please take a look', 'the build is red'])
     controller.abort(); await running; store.close()
   }, 20_000)
   it('reports a lark-desktop it cannot find, and waits while the Source is off', async () => {
