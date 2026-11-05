@@ -6,6 +6,8 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Config, executable, machineOf, resolveDeployment, resolveFeishuBot, type Machine, type Probe } from '../src/deployment.ts'
 import { gitEnv } from './fixtures/git.ts'
+import { setupChanged, setupRerun } from '../src/app/setup.ts'
+import { SettingsSchema } from '../src/policy.ts'
 
 const exec = promisify(execFile)
 let dir: string
@@ -82,6 +84,16 @@ describe('setup', () => {
     await needs('github', 'repositoryUnreadable', { account: 'Agent-Bot', repository: 'acme/widgets', output }, { repository, cli: unreadable })
     await needs('github', 'agentCliNoAccount', {}, { repository, cli: program(join(dir, 'bin', 'gh-anonymous'), `echo '{}'`) })
     expect(() => executable('nothing-here', join(dir, 'bin'))).toThrow('nothing-here is not an executable file on PATH')
+  })
+  it('needs no repository or GitHub account while the GitHub Source is off, and checks again when it is switched', async () => {
+    const off = machine()
+    expect(await resolveDeployment(off, {}, probe, path, false)).toEqual(off)
+    // What an earlier save left on the switched-off Source is not checked either.
+    expect(await resolveDeployment(machine(), { cli: join(dir, 'missing') }, probe, path, false)).not.toHaveProperty('github')
+    const github = (enabled?: boolean) => SettingsSchema.parse({ sources: enabled === undefined ? {} : { github: { enabled } } })
+    expect([setupRerun(github(), github(true)), setupRerun(github(true), github(false)), setupRerun(github(false), github())]).toEqual([false, true, true])
+    // Switching the Source is no account change, so the main Session may still switch it off.
+    expect(setupChanged(github(true), github(false))).toBe(false)
   })
   it('reads the Feishu bot from a bot-only lark-cli, or finds none when the Feishu Source names no CLI', async () => {
     expect(await resolveFeishuBot(machine(), {}, probe, path)).toBeUndefined()
