@@ -53,7 +53,9 @@ export const KV = {
    * to last-seen timestamp; and per-polled-thread seen message IDs and initialization flag.
    */
   /** lark-desktop Source: watch lines whose intake failed, by message id, kept for another attempt. */
-  larkDesktop: { parked: record<Record<string, { line: string; tries: number; error: string; at: string }>>('lark-desktop-parked') },
+  larkDesktop: { parked: record<Record<string, { line: string; tries: number; error: string; at: string }>>('lark-desktop-parked'),
+    /** Desktop notices already shown, by key, with when. */
+    notified: record<Record<string, string>>('lark-desktop-notified') },
   feishu: { chats: record<Record<string, boolean>>('feishu-chats'), history: family<string, [chat: string]>('feishu-history:'),
     topics: family<Record<string, string>, [chat: string]>('feishu-history-threads:'),
     seen: family<string[], [thread: string]>('thread-seen:'), initialized: family<boolean, [thread: string]>('thread-initialized:') },

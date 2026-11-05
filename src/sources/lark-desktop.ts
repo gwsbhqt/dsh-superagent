@@ -17,19 +17,25 @@ import type { SourceKind } from './kind.ts'
 import { JEV_KEY_REF, JevBatcher, httpJev, type JevAsk } from './lark-desktop-jev.ts'
 import { larkDesktopThreadContext } from './lark-desktop-read.ts'
 import { larkDesktopChannel } from './lark-desktop-channel.ts'
+import { desktop } from './lark-desktop-notify.ts'
+/** How often open tickets are checked for one that waits for the person. */
+const NOTICE_CHECK_MS = 30_000
 import { ExpiredLineSchema, NoticeLineSchema, SOURCE, WatchedMessageSchema, larkScope, larkTrigger, needsJev, storedMessage, withJev,
   botReply, withQuote, type WatchedMessage } from './lark-desktop-trigger.ts'
 
 export { AGENT_MARK, SOURCE, botReply, withQuote, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, storedMessage, withJev } from './lark-desktop-trigger.ts'
 export { JevBatcher, httpJev, jevBatch, type JevAsk } from './lark-desktop-jev.ts'
 export { larkDesktopThreadContext, larkView } from './lark-desktop-read.ts'
-export { CHANNEL_CONSUMER, larkDesktopChannel, sendLarkDesktop } from './lark-desktop-channel.ts'
+export { CHANNEL_CONSUMER, STANDALONE, larkDesktopChannel, larkParts, sendLarkDesktop } from './lark-desktop-channel.ts'
 
 const LarkDesktopConfigSchema = z.object({
   cli: z.string().trim().min(1).default('lark-desktop'),
   consumer: z.string().trim().regex(/^[A-Za-z0-9._-]{1,64}$/, 'Letters, digits, dots, dashes and underscores').default('dsh-superagent'),
   jev: z.enum(['off', 'observe', 'filter']).default('observe'),
   jevMinimum: z.number().int().min(0).max(100).default(50),
+  notify: z.boolean().default(true),
+  notifier: z.string().trim().min(1).default('terminal-notifier'),
+  panelUrl: z.union([z.literal(''), z.url()]).default(''),
 }).strict()
 export type LarkDesktopConfig = z.infer<typeof LarkDesktopConfigSchema>
 
@@ -50,6 +56,12 @@ export const larkDesktopKind: SourceKind<LarkDesktopConfig> = {
         en: 'Messages in chats that neither mention nor reply to the person first go to the small Jev model, in batches, which judges whether the person needs them. Score only filters nothing; Filter leaves out those below the threshold. Direct messages, mentions and replies skip it, and when it fails the messages are received as usual. Its key is TYPESAFE_API_KEY in the credentials.' } },
     { key: 'jevMinimum', type: 'number', advanced: true, min: 0, max: 100, label: { zh: 'Jev 阈值 / %', en: 'Jev threshold / %' },
       hint: { zh: '“过滤”时，Jev 认为本人需要的概率低于它就不收。', en: 'With Filter, a message Jev gives a lower probability that the person needs it is not received.' } },
+    { key: 'notify', type: 'switch', label: { zh: '桌面通知', en: 'Desktop notifications' },
+      hint: { zh: '以本人名义发出消息时，以及工单需要本人回答、卡住、失败、做好等你看时，在这台电脑上弹通知；每件事只弹一次。', en: 'Shows a notification on this computer when a message goes out in the person\'s name, and when a ticket needs their answer, is blocked, failed, or is ready for them; once each.' } },
+    { key: 'notifier', type: 'text', advanced: true, label: { zh: '通知命令', en: 'Notifier command' },
+      hint: { zh: 'terminal-notifier，或它的绝对路径（Homebrew 安装）。', en: 'terminal-notifier, or its absolute path (installed with Homebrew).' } },
+    { key: 'panelUrl', type: 'text', label: { zh: '面板地址', en: 'Panel address' },
+      hint: { zh: '这个 DeepSeek Harness 网页的地址，如 http://127.0.0.1:3082/。填了以后，点通知会打开那张工单；不填就只弹通知。', en: 'The address of this DeepSeek Harness web page, such as http://127.0.0.1:3082/. With it, clicking a notification opens its ticket; without it, the notification opens nothing.' } },
   ],
   health: [SOURCE],
   scope: ({ meta }) => larkScope(meta),
@@ -179,6 +191,8 @@ async function consume(ctx: SourceContext, config: LarkDesktopConfig, muted: Mut
     ctx.report(SOURCE, { ...listening, detail: `${listening.detail}; Jev failed, so its batch was received unscored: ${error instanceof Error ? error.message : String(error)}`, at: new Date().toISOString() })
   }) : undefined
   const scoring = new Set<Promise<void>>()
+  desktop.use(ctx, config)
+  const notices = setInterval(() => { desktop.check() }, NOTICE_CHECK_MS)
   const refresh = () => refreshMuted(ctx, cli, muted, signal).catch(() => { /* The previous map stays; an unknown chat counts as not muted. */ })
   if (Date.now() - muted.at > MUTED_REFRESH_MS) await refresh()
   // `--scope others`: direct messages, and every group message but the person's own; `--no-ack` leaves no status emoji.
@@ -208,6 +222,7 @@ async function consume(ctx: SourceContext, config: LarkDesktopConfig, muted: Mut
       child.once('close', code => signal.aborted ? resolve() : reject(new Error(`lark-desktop watch exited (${code}, subscribed=${ready}): ${diagnostic}`)))
     })
   } finally {
+    clearInterval(notices)
     clearTimeout(timeout); clearInterval(rereads); signal.removeEventListener('abort', stop); stdout.close(); stderr.close(); await chain
     await batcher?.flush(); await Promise.all(scoring)
   }

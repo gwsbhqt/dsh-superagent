@@ -47,6 +47,14 @@ export function parseRoute(value: unknown): Route | undefined {
 }
 
 const ROUTE_KEY = 'dsh-superagent/route'
+/** The address hash a desktop notification opens a ticket by: `#superagent=execution/<ticket id>`. */
+const LINK = /^#superagent=execution\/([A-Za-z0-9_-]+)$/
+/** The ticket an address names, which then leaves the address so a reload does not open it again. */
+export function linkedTicket(): string | undefined {
+  const id = LINK.exec(location.hash)?.[1]
+  if (id) history.replaceState(null, '', location.pathname + location.search)
+  return id
+}
 export interface Location { route: Route; stack: Route[]; group?: SettingsGroup | undefined }
 export const lastSettingsGroup = ({ route, group }: Location): SettingsGroup => route.page === 'settings' ? route.query.group
   : group ?? 'source'

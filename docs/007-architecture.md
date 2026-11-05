@@ -380,6 +380,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/lark-desktop-jev.ts` | Layer one of the lark-desktop Source: `jevBatch` and `JevBatcher` ask Jev, in batches, whether the person needs each message that addresses no one; a failed batch lets its messages through unscored |
 | `src/sources/lark-desktop-read.ts` | The lark-desktop Source's thread context for assessments: the replied-to message, the first message of a topic or reply chain, and the pages of a topic, the reply chain, or the chat's latest messages |
 | `src/sources/lark-desktop-channel.ts` | The lark-desktop Source's Channel: a reply in the person's name under the message a Thread started from, once per outgoing message id, which the CLI ends with 🤖 |
+| `src/sources/lark-desktop-notify.ts` | Desktop notifications of the lark-desktop Source: a reply sent in the person's name, and an open ticket that waits for them, each once, opening the ticket on the panel |
 | `src/client/index.tsx` | The client plugin entry: the sidebar entry, the main panel and the page in DeepSeek Harness's Plugin Manager |
 | `src/client/app.tsx` | The panel: header, search, glossary, tabs and the page of the current route |
 | `src/client/provider.tsx` | What every page reads from its host: copy, calls, navigation, notices, the state poll, and `restart`, which reads the state quickly while dsh-superagent restarts |

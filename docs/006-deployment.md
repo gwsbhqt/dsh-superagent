@@ -78,6 +78,12 @@ A reply to the operator carries the message it answers, read when it arrives, so
 
 It runs `lark-desktop watch` with `--no-ack`, so it adds no status emoji. Its Channel answers in the operator's own name, as a reply to the message a Thread started from, in its topic when it has one: `lark-desktop reply` with the outgoing message's id as the idempotency key, so a retry sends nothing twice, and under the claim name `dsh-superagent`, so another subscriber of the operator does not answer the same message. The CLI ends every such reply with 🤖, which tells people it is the agent and keeps it out of this Source. A reply counts as sent only once the CLI returns its message id; a message or chat that is gone drops it. The Channel calls `lark-desktop` by name, so the CLI must be on the host's `PATH`.
 
+One outgoing text may hold several messages, separated by a line of `---`. Each is a reply, or, when its first line is `[单发]`, a message of its own in the chat; in a topic it stays in the topic. `@[name](user id)` mentions someone by the id a card shows, and `@[name]` by a name lark-desktop looks up in the chat; a name no member goes by is sent as plain text, and the notification says so. Each message has its own idempotency key, so a retry sends only what has not gone out.
+
+Desktop notifications, on by default, show on the machine when a message goes out in the operator's name, and when an open ticket has a question for them, is blocked or failed, could not deliver a message, or has been ready for review for two minutes without a reply announcing it; each once. They use `terminal-notifier` (`brew install terminal-notifier`). With the card's panel address set, such as `http://127.0.0.1:3082/`, a click opens the ticket on the panel, which reads it from the address hash `#superagent=execution/<ticket id>`.
+
+An assessment that accepts work may mark it `effort: light`, such as a short reply or a lookup; its worker then runs on the Execution settings' light model, when one is set, and other work on the Executor model.
+
 lark-desktop counts a printed line as delivered, so a line whose intake fails is kept, by its message id, and taken in again when the watch subscribes and every five minutes; after five failed attempts it is given up and reported.
 
 No allowed list is needed to act for the operator alone: the admission table's cells for senders not on the list admit what reaches the operator, and the rules decide what becomes work.

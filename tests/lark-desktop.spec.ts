@@ -12,7 +12,8 @@ import { SourceRegistry } from '../src/sources/registry.ts'
 import { triggerMessage } from '../src/executor/dsh.ts'
 import { KV } from '../src/kv.ts'
 import { CliError } from '../src/infra/commands.ts'
-import { AGENT_MARK, JevBatcher, botReply, sendLarkDesktop, withQuote, larkDesktopThreadContext, httpJev, jevBatch, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, runLarkDesktop,
+import { DesktopNotifier, REVIEW_GRACE_MS, ticketLink, type DesktopNotice } from '../src/sources/lark-desktop-notify.ts'
+import { AGENT_MARK, JevBatcher, botReply, larkParts, sendLarkDesktop, withQuote, larkDesktopThreadContext, httpJev, jevBatch, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, runLarkDesktop,
   storedMessage, withJev, type JevAsk } from '../src/sources/lark-desktop.ts'
 import { testDeployment } from './fixtures/deployment.ts'
 
@@ -141,8 +142,8 @@ describe('the Channel', () => {
     const ok = host(async (_cli, args) => { seen.push(args); return JSON.stringify({ message_id: 'sent-1' }) })
     expect(await sendLarkDesktop(ok, outgoing({ chatId: 'c', messageId: 'm-1' }))).toBe('sent')
     expect(await sendLarkDesktop(ok, outgoing({ chatId: 'c', messageId: 'm-1', topic: 'true' }))).toBe('sent')
-    expect(seen).toEqual([['reply', 'm-1', '--text', 'Done', '--idempotency-key', 'out-1', '--consumer', 'dsh-superagent', '--yes'],
-      ['reply', 'm-1', '--text', 'Done', '--idempotency-key', 'out-1', '--consumer', 'dsh-superagent', '--in-thread', '--yes']])
+    expect(seen).toEqual([['reply', 'm-1', '--consumer', 'dsh-superagent', '--text', 'Done', '--idempotency-key', 'out-1', '--yes'],
+      ['reply', 'm-1', '--consumer', 'dsh-superagent', '--in-thread', '--text', 'Done', '--idempotency-key', 'out-1', '--yes']])
   })
   it('drops a reply whose message is gone, and retries one without a message id or after another failure', async () => {
     expect(await sendLarkDesktop(host(async () => { throw new CliError('{"error": "message_not_found"}') }), outgoing({ chatId: 'c', messageId: 'm-1' }))).toBe('gone')
@@ -150,8 +151,63 @@ describe('the Channel', () => {
     await expect(sendLarkDesktop(host(async () => '{}'), outgoing({ chatId: 'c', messageId: 'm-1' }))).rejects.toThrow('without a message id')
     await expect(sendLarkDesktop(host(async () => { throw new CliError('timed out') }), outgoing({ chatId: 'c', messageId: 'm-1' }))).rejects.toThrow('timed out')
   })
+  it('splits a text into messages on --- lines, each a reply or, after [单发], a message of its own, with its mentions', () => {
+    expect(larkParts('Hi @[Ada](1234567), done\n---\n[单发]\n1\n---\n@[Bo] and @[Ada](1234567)')).toEqual([
+      { text: 'Hi @Ada, done', standalone: false, mentions: ['1234567:Ada'] }, { text: '1', standalone: true, mentions: [] },
+      { text: '@Bo and @Ada', standalone: false, mentions: ['Bo', '1234567:Ada'] }])
+    expect(larkParts('plain')).toEqual([{ text: 'plain', standalone: false, mentions: [] }])
+  })
+  it('sends each message once by its own key, a message of its own into the chat, and a name no one goes by as plain text', async () => {
+    const seen: string[][] = []
+    const ok = host(async (_cli, args) => {
+      seen.push(args)
+      if (args.includes('--mention') && args.includes('Nobody')) throw new CliError('{"error": "mention_not_found"}')
+      return JSON.stringify({ message_id: `sent-${seen.length}` })
+    })
+    const message = { ...outgoing({ chatId: 'c', messageId: 'm-1' }), text: '[单发] 1\n---\n2 @[Nobody] @[Ada](1234567)' }
+    expect(await sendLarkDesktop(ok, message)).toBe('sent')
+    expect(seen).toEqual([['send', 'c', '--text', '1', '--idempotency-key', 'out-1-1', '--yes'],
+      ['reply', 'm-1', '--consumer', 'dsh-superagent', '--text', '2 @Nobody @Ada', '--mention', 'Nobody', '--mention', '1234567:Ada', '--idempotency-key', 'out-1-2', '--yes'],
+      ['reply', 'm-1', '--consumer', 'dsh-superagent', '--text', '2 @Nobody @Ada', '--mention', '1234567:Ada', '--idempotency-key', 'out-1-2', '--yes']])
+    // In a topic a message of its own stays in the topic.
+    seen.length = 0
+    await sendLarkDesktop(ok, { ...outgoing({ chatId: 'c', messageId: 'm-1', topic: 'true' }), text: '[单发] 1' })
+    expect(seen[0]!.slice(0, 2)).toEqual(['reply', 'm-1'])
+  })
   it('gives every message an address under the message itself', () => {
     expect(larkTrigger(line({ thread_id: 't-1' }), false)!.channel).toEqual({ source: 'lark-desktop', thread: 'lark-desktop:chat-1:t-1', address: { chatId: 'chat-1', messageId: 'm-1', topic: 'true' } })
+  })
+})
+
+describe('desktop notifications', () => {
+  const ticket = (overrides: Record<string, unknown> = {}) => ({ id: 't-1', title: 'Answer Ada', updatedAt: new Date(0).toISOString(),
+    assignments: [{ id: 'a-1', state: 'ended', report: { state: 'blocked', summary: 'needs a token' } }], inputs: [], undelivered: [], ...overrides }) as never
+  function setup(tickets: unknown[]) {
+    const state = new Map<string, unknown>()
+    const shown: DesktopNotice[] = []
+    const notifier = new DesktopNotifier((notice) => { shown.push(notice) })
+    notifier.use({ state: { get: (key: string) => state.get(key), set: (key: string, value: unknown) => { state.set(key, value) }, keys: () => [] } as never,
+      tickets: { open: () => tickets, get: (id: string) => (tickets as { id: string }[]).find(item => item.id === id) } as never, report: () => {} },
+      { notify: true, notifier: 'terminal-notifier', panelUrl: 'http://127.0.0.1:3082/' })
+    return { notifier, shown }
+  }
+  it('links a notice to its ticket on the panel', () => {
+    expect([ticketLink('http://127.0.0.1:3082/', 't-1'), ticketLink('', 't-1')]).toEqual(['http://127.0.0.1:3082/#superagent=execution/t-1', undefined])
+  })
+  it('announces a reply in the person\'s name once, and a ticket waiting for them once per report', () => {
+    const { notifier, shown } = setup([ticket()])
+    const message = { id: 'out-1', kind: 'reply' as const, text: '好', ticketId: 't-1', channel: { source: 'lark-desktop', thread: 'x', address: {} } }
+    notifier.replied(message, ['好']); notifier.replied(message, ['好'])
+    notifier.check(); notifier.check()
+    expect(shown.map(item => [item.title, item.message])).toEqual([['我已替你处理：Answer Ada', '回复：好'], ['卡住了，需要你：Answer Ada', 'needs a token']])
+  })
+  it('announces a ticket ready for review only after a grace and when no reply announced it', () => {
+    const ready = ticket({ updatedAt: new Date(1000).toISOString(), assignments: [{ id: 'a-1', state: 'ended', report: { state: 'ready', summary: 'MR approved' } }] })
+    const { notifier, shown } = setup([ready])
+    notifier.check(1000 + REVIEW_GRACE_MS - 1)
+    expect(shown).toEqual([])
+    notifier.check(1000 + REVIEW_GRACE_MS)
+    expect(shown.map(item => item.title)).toEqual(['做好了，等你看：Answer Ada'])
   })
 })
 
