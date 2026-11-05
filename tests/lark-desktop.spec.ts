@@ -24,6 +24,9 @@ describe('lark-desktop messages', () => {
       at: '2026-01-02T03:04:05.000Z', text: 'please take a look', meta: { chatId: 'chat-1', chatName: 'Widgets', direct: true, mentioned: false, muted: false } })
     expect(larkTrigger(line({ is_at_me: true }), true)).toMatchObject({ addressed: 'mention', meta: { mentioned: true, muted: true } })
     expect(larkTrigger(line({ addressed_to_me: true }), false)).toMatchObject({ addressed: 'mention' })
+    // A bot's reply to the person addresses them too, though lark-desktop's addressed_to_me leaves it out.
+    const reply = larkTrigger(line({ sender_is_bot: true, reply_to: 'm-0', reply_to_me: true, addressed_to_me: false }), true)!
+    expect([reply.addressed, reply.human, larkScope(reply.meta), needsJev(reply)]).toEqual(['mention', false, { listened: true, observed: false, row: 'mentions' }, false])
     expect(larkTrigger(line(), false)).not.toHaveProperty('addressed')
     expect(larkTrigger(line({ sender_is_bot: true }), false)).toMatchObject({ human: false })
   })

@@ -18,6 +18,7 @@ export const WatchedMessageSchema = z.looseObject({
   addressed_to_me: z.boolean().nullish(), mentions: z.array(z.string()).nullish(), recalled: z.boolean().nullish(),
   media: z.array(z.unknown()).nullish(), muted: z.boolean().nullish(), root_id: z.string().nullish(),
   urgent: z.boolean().nullish(), urgent_to_me: z.boolean().nullish(), urgent_type: z.string().nullish(), urgent_at: z.number().nullish(),
+  reply_to_me: z.boolean().nullish(),
 })
 export type WatchedMessage = z.infer<typeof WatchedMessageSchema>
 /** A line of `lark-desktop watch` for a message whose body expired before it was read; `lark-desktop message` reads it again. */
@@ -45,14 +46,15 @@ export const larkTriggerId = (messageId: string, urgentAt?: number | null): stri
 /**
  * The Trigger of one message, or none for a recalled message and one an agent sent as the person. Whether the person muted
  * the chat comes with the message, or else from `muted`, what the chat list said; the Source's scope reads it from `meta`.
- * An urgent call to the person addresses them, as a mention does.
+ * An urgent call to the person addresses them, as a mention does, and so does a reply to one of their messages, a bot's too,
+ * which lark-desktop's own `addressed_to_me` leaves out to keep bots' status replies out of its subscriptions.
  */
 export function larkTrigger(message: WatchedMessage, muted: boolean, now: () => number = Date.now): Trigger | undefined {
   const text = message.text ?? ''
   if (message.recalled || text.trimEnd().endsWith(AGENT_MARK)) return undefined
   const direct = message.chat_kind === 'direct'
   const urgent = message.urgent_to_me === true
-  const mentioned = !direct && (message.is_at_me === true || message.addressed_to_me === true || urgent)
+  const mentioned = !direct && (message.is_at_me === true || message.addressed_to_me === true || message.reply_to_me === true || urgent)
   return {
     id: larkTriggerId(message.message_id, urgent ? message.urgent_at ?? 0 : undefined), source: SOURCE, threads: [{ source: SOURCE, id: larkThreadId(message) }],
     actor: { source: SOURCE, id: message.sender_id ?? '', ...(message.sender_name ? { name: message.sender_name } : {}) },
