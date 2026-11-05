@@ -54,15 +54,21 @@ export function larkTrigger(message: WatchedMessage, muted: boolean, now: () => 
   if (message.recalled || text.trimEnd().endsWith(AGENT_MARK)) return undefined
   const direct = message.chat_kind === 'direct'
   const urgent = message.urgent_to_me === true
-  const mentioned = !direct && (message.is_at_me === true || message.addressed_to_me === true || message.reply_to_me === true || urgent)
+  const called = message.is_at_me === true || message.addressed_to_me === true
+  const replyOnly = !direct && !urgent && !called && message.reply_to_me === true
+  const mentioned = !direct && (called || urgent || replyOnly)
+  const reach = direct ? 'direct message to the person' : urgent ? 'urgent call to the person' : called ? 'mentions the person'
+    : replyOnly ? 'replies to a message of the person' : undefined
   return {
     id: larkTriggerId(message.message_id, urgent ? message.urgent_at ?? 0 : undefined), source: SOURCE, threads: [{ source: SOURCE, id: larkThreadId(message) }],
     actor: { source: SOURCE, id: message.sender_id ?? '', ...(message.sender_name ? { name: message.sender_name } : {}) },
     human: !!message.sender_id && message.sender_is_bot !== true,
     ...(direct ? { addressed: 'direct' as const } : mentioned ? { addressed: 'mention' as const } : {}),
+    ...(reach ? { reach } : {}),
     at: new Date(message.sent_at ?? now()).toISOString(), text,
     meta: {
       chatId: message.chat_id, messageId: message.message_id, direct, mentioned, muted: message.muted ?? muted,
+      ...(replyOnly ? { replyOnly: true } : {}),
       ...(urgent ? { urgent: true, ...(message.urgent_type ? { urgentType: message.urgent_type } : {}) } : {}),
       ...(message.chat_name ? { chatName: message.chat_name } : {}), ...(message.sender_name ? { senderName: message.sender_name } : {}),
       ...(message.thread_id ? { threadId: message.thread_id } : {}), ...(message.root_id ? { rootId: message.root_id } : {}),
@@ -71,8 +77,14 @@ export function larkTrigger(message: WatchedMessage, muted: boolean, now: () => 
     },
   }
 }
-/** Whether a message goes to Jev: one that neither addresses the person nor comes from a muted chat, which the scope leaves out anyway. */
-export const needsJev = (trigger: Trigger): boolean => trigger.meta.direct !== true && trigger.meta.mentioned !== true && trigger.meta.muted !== true
+/**
+ * A bot's reply to the person that neither mentions nor urgently calls them: often a status line such as "in progress", so
+ * Jev judges it and, while Jev is on, a low score leaves it out whatever the Jev setting says about other chat messages.
+ */
+export const botReply = (trigger: Trigger): boolean => !trigger.human && trigger.meta.replyOnly === true
+/** Whether a message goes to Jev: a bot's reply to the person, or one that neither addresses the person nor comes from a muted chat. */
+export const needsJev = (trigger: Trigger): boolean => botReply(trigger)
+  || (trigger.meta.direct !== true && trigger.meta.mentioned !== true && trigger.meta.muted !== true)
 /**
  * Records Jev's probability that the person needs a message, and with `minimum` (a percentage) whether it falls below it,
  * which the scope then leaves out. The verdict is kept in `meta` so a later change of the threshold does not change what was received.
@@ -88,8 +100,8 @@ export function withJev(trigger: Trigger, score: number, minimum?: number): Trig
  */
 export function larkScope(meta: Record<string, unknown>): ScopeResult {
   if (meta.direct === true) return { listened: true, observed: true, row: 'direct' }
+  if (meta.jevDropped === true) return { listened: false, reason: 'lark_desktop_jev' }
   if (meta.mentioned === true) return { listened: true, observed: false, row: 'mentions' }
   if (meta.muted === true) return { listened: false, reason: 'lark_desktop_muted' }
-  if (meta.jevDropped === true) return { listened: false, reason: 'lark_desktop_jev' }
   return { listened: true, observed: true, row: 'chats' }
 }

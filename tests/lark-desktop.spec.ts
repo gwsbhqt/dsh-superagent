@@ -9,7 +9,8 @@ import { Commands } from '../src/infra/commands.ts'
 import { HealthBoard } from '../src/infra/health.ts'
 import { SettingsSchema, anyoneAdmitted, settingsPolicy } from '../src/policy.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
-import { AGENT_MARK, JevBatcher, httpJev, jevBatch, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, runLarkDesktop,
+import { triggerMessage } from '../src/executor/dsh.ts'
+import { AGENT_MARK, JevBatcher, botReply, larkDesktopThreadContext, httpJev, jevBatch, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, runLarkDesktop,
   storedMessage, withJev, type JevAsk } from '../src/sources/lark-desktop.ts'
 import { testDeployment } from './fixtures/deployment.ts'
 
@@ -26,7 +27,19 @@ describe('lark-desktop messages', () => {
     expect(larkTrigger(line({ addressed_to_me: true }), false)).toMatchObject({ addressed: 'mention' })
     // A bot's reply to the person addresses them too, though lark-desktop's addressed_to_me leaves it out.
     const reply = larkTrigger(line({ sender_is_bot: true, reply_to: 'm-0', reply_to_me: true, addressed_to_me: false }), true)!
-    expect([reply.addressed, reply.human, larkScope(reply.meta), needsJev(reply)]).toEqual(['mention', false, { listened: true, observed: false, row: 'mentions' }, false])
+    expect([reply.addressed, reply.human, reply.reach, larkScope(reply.meta)]).toEqual(['mention', false, 'replies to a message of the person',
+      { listened: true, observed: false, row: 'mentions' }])
+    // A bot's plain reply goes to Jev, which leaves it out below the threshold even in a muted chat; a person's reply skips Jev.
+    expect([botReply(reply), needsJev(reply), larkScope(withJev(reply, 0.2, 50).meta)]).toEqual([true, true, { listened: false, reason: 'lark_desktop_jev' }])
+    const person = larkTrigger(line({ reply_to: 'm-0', reply_to_me: true }), false)!
+    expect([botReply(person), needsJev(person)]).toEqual([false, false])
+    // A bot that mentions the person is no plain reply.
+    expect(needsJev(larkTrigger(line({ sender_is_bot: true, reply_to_me: true, is_at_me: true }), false)!)).toBe(false)
+  })
+  it('shows models who sent a message, that it is a bot, and how it reached the person', () => {
+    const card = triggerMessage(larkTrigger(line({ sender_is_bot: true, reply_to: 'm-0', reply_to_me: true }), false)!, {})
+    expect(card).toMatchObject({ from: 'user-1', from_name: 'Ada', bot: true, reached_by: 'replies to a message of the person' })
+    expect(triggerMessage(larkTrigger(line({ chat_kind: 'direct' }), false)!, {})).not.toHaveProperty('bot')
     expect(larkTrigger(line(), false)).not.toHaveProperty('addressed')
     expect(larkTrigger(line({ sender_is_bot: true }), false)).toMatchObject({ human: false })
   })
@@ -84,6 +97,34 @@ describe('acting for the person alone', () => {
     expect(gate({ reply_to: 'm-0', addressed_to_me: true })).toMatchObject({ admissible: true, strength: 'inferred', basis: { row: 'mentions' } })
     expect(gate({})).toMatchObject({ admissible: false })
     expect(anyoneAdmitted(settings)).toBe(true)
+  })
+})
+
+describe('thread context for assessments', () => {
+  const stored = (id: string, extra: Record<string, unknown> = {}) => ({ id, sender_id: 'u', sender_name: 'Someone', sent_at: 1000, text: `text ${id}`, ...extra })
+  function fake(answers: Record<string, unknown>) {
+    const calls: string[] = []
+    const commands = { run: vi.fn(async (_cli: string, args: string[]) => { calls.push(args.join(' ')); return JSON.stringify(answers[args[0]!]) }) }
+    return { commands: commands as never, calls }
+  }
+  const read = (trigger: Trigger, part: 'thread' | 'root' | 'parent', commands: never, cursor?: string) =>
+    larkDesktopThreadContext.read(commands, trigger, part, cursor, { cli: 'lark-desktop' })
+  it('reads the replied-to message and the first message of the chain', async () => {
+    const { commands, calls } = fake({ message: { message: stored('m-0', { sender_is_bot: true }), context: [] } })
+    const trigger = larkTrigger(line({ reply_to: 'm-0', root_id: 'm-r', reply_to_me: true }), false)!
+    expect((await read(trigger, 'parent', commands)).messages).toEqual([{ id: 'm-0', from: 'Someone', at: '1970-01-01T00:00:01.000Z', text: 'text m-0', bot: true }])
+    await read(trigger, 'root', commands)
+    expect(calls).toEqual(['message m-0 --no-parent', 'message m-r --no-parent'])
+    expect((await read(larkTrigger(line(), false)!, 'parent', commands)).status).toBe('no_parent')
+  })
+  it('reads a topic by pages, a reply chain up to its first message, and else the latest messages of the chat', async () => {
+    const { commands, calls } = fake({ thread: { messages: [stored('t-1')], complete: false, older_than: 42 },
+      message: { message: stored('m-1', { parent_id: 'm-0' }), context: [stored('m-0')] }, history: { messages: [stored('h-1')], complete: true } })
+    expect(await read(larkTrigger(line({ thread_id: 't-1' }), false)!, 'thread', commands)).toMatchObject({ status: 'available', next: '42', messages: [{ id: 't-1' }] })
+    await read(larkTrigger(line({ thread_id: 't-1' }), false)!, 'thread', commands, '42')
+    expect((await read(larkTrigger(line({ reply_to: 'm-0' }), false)!, 'thread', commands)).messages.map(item => item.id)).toEqual(['m-0', 'm-1'])
+    expect(await read(larkTrigger(line(), false)!, 'thread', commands)).toMatchObject({ status: 'chat_recent', next: undefined })
+    expect(calls).toEqual(['thread t-1 --limit 20', 'thread t-1 --limit 20 --before-position 42', 'message m-1 --chain 10', 'history chat-1 --limit 20'])
   })
 })
 

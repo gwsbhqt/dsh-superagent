@@ -21,13 +21,14 @@ export type JevAsk = (state: unknown, questions: Record<string, NoulQuestion>, s
 /** The state and the questions of one batch: one question per message, keyed `m<index>`. */
 export function jevBatch(messages: readonly WatchedMessage[]): { state: unknown; questions: Record<string, NoulQuestion> } {
   const state = { recipient: '收到这些飞书消息的人本人', messages: messages.map(message => ({ chat: message.chat_name ?? '', from: message.sender_name ?? '',
-    bot: message.sender_is_bot === true, text: (message.text ?? '').slice(0, TEXT_CHARS) })) }
+    bot: message.sender_is_bot === true, ...(message.reply_to_me === true ? { replies_to_recipient: true } : {}),
+    text: (message.text ?? '').slice(0, TEXT_CHARS) })) }
   const questions = Object.fromEntries(messages.map((_, index) => [`m${index}`, {
     type: 'noul' as const,
     instructions: `上面 messages 数组里第 ${index + 1} 条消息，需要收件人本人处理或知道吗？`,
     criteria: {
       true: '有人请他做事、问他问题、等他决定或回复；和他负责的系统、代码或线上告警有关；他需要知道的变更、事故或安排',
-      false: '寒暄、表情、客套；和他无关的闲聊或广播；没有信息的测试消息',
+      false: '寒暄、表情、客套；和他无关的闲聊或广播；没有信息的测试消息；机器人回复他时的状态播报，如“任务进行中”“任务已完成”，本身没有新内容',
     },
   }]))
   return { state, questions }

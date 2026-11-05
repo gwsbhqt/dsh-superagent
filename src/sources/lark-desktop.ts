@@ -14,11 +14,13 @@ import { consumerRetry } from './feishu-loops.ts'
 import { health, sourceContext, type SourceContext } from './host.ts'
 import type { SourceKind } from './kind.ts'
 import { JEV_KEY_REF, JevBatcher, httpJev, type JevAsk } from './lark-desktop-jev.ts'
+import { larkDesktopThreadContext } from './lark-desktop-read.ts'
 import { ExpiredLineSchema, NoticeLineSchema, SOURCE, WatchedMessageSchema, larkScope, larkTrigger, needsJev, storedMessage, withJev,
-  type WatchedMessage } from './lark-desktop-trigger.ts'
+  botReply, type WatchedMessage } from './lark-desktop-trigger.ts'
 
-export { AGENT_MARK, SOURCE, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, storedMessage, withJev } from './lark-desktop-trigger.ts'
+export { AGENT_MARK, SOURCE, botReply, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, storedMessage, withJev } from './lark-desktop-trigger.ts'
 export { JevBatcher, httpJev, jevBatch, type JevAsk } from './lark-desktop-jev.ts'
+export { larkDesktopThreadContext, larkView } from './lark-desktop-read.ts'
 
 const LarkDesktopConfigSchema = z.object({
   cli: z.string().trim().min(1).default('lark-desktop'),
@@ -48,6 +50,7 @@ export const larkDesktopKind: SourceKind<LarkDesktopConfig> = {
   ],
   health: [SOURCE],
   scope: ({ meta }) => larkScope(meta),
+  threadContext: larkDesktopThreadContext,
   policy: {
     unnamed: { person: { zh: '飞书用户', en: 'Feishu user' }, bot: { zh: '飞书机器人', en: 'Feishu bot' } },
     schema: z.object({
@@ -193,7 +196,7 @@ async function take(ctx: SourceContext, run: Run, line: string): Promise<void> {
   // Lines read after the Source was switched off are dropped; the watch stops shortly after.
   if (!batcher || !needsJev(trigger)) { if (enabled(ctx)) await receive(ctx, trigger); return }
   const scored: Promise<void> = batcher.score(message)
-    .then(score => score === undefined ? trigger : withJev(trigger, score, config.jev === 'filter' ? config.jevMinimum : undefined))
+    .then(score => score === undefined ? trigger : withJev(trigger, score, config.jev === 'filter' || botReply(trigger) ? config.jevMinimum : undefined))
     .then(async result => { if (enabled(ctx)) await receive(ctx, result) })
     .catch((error: unknown) => { ctx.report(SOURCE, { state: 'error', detail: error instanceof Error ? error.message : String(error) }) })
     .finally(() => { scoring.delete(scored) })

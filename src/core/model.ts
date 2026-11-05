@@ -34,6 +34,8 @@ export interface Trigger {
   human: boolean
   /** Source-declared: the sender addressed the agent, by mentioning it or in a direct message to it. */
   addressed?: 'mention' | 'direct'
+  /** Source-declared: a few words on how the message reached whom the agent acts for, such as `replies to the person`; display and model context only, never authority. */
+  reach?: string
   at: string
   text: string
   channel?: ChannelRef
