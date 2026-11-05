@@ -55,7 +55,7 @@ export function larkTrigger(message: WatchedMessage, muted: boolean, now: () => 
   const mentioned = !direct && (message.is_at_me === true || message.addressed_to_me === true || urgent)
   return {
     id: larkTriggerId(message.message_id, urgent ? message.urgent_at ?? 0 : undefined), source: SOURCE, threads: [{ source: SOURCE, id: larkThreadId(message) }],
-    actor: { source: SOURCE, id: message.sender_id ?? '' },
+    actor: { source: SOURCE, id: message.sender_id ?? '', ...(message.sender_name ? { name: message.sender_name } : {}) },
     human: !!message.sender_id && message.sender_is_bot !== true,
     ...(direct ? { addressed: 'direct' as const } : mentioned ? { addressed: 'mention' as const } : {}),
     at: new Date(message.sent_at ?? now()).toISOString(), text,

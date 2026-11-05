@@ -2,7 +2,11 @@
 import type { Reason } from './reasons.ts'
 
 /** Actor identity in the source's own vocabulary; Policy decides which actors may originate work on that Source. */
-export interface ActorRef { source: string; id: string }
+export interface ActorRef {
+  source: string; id: string
+  /** The sender's display name as the Source read it, for display only: policy compares `id` and never this. */
+  name?: string
+}
 /** Thread identity; the rule that derives `id` from a native event belongs to the source. */
 export interface ThreadRef { source: string; id: string }
 /** Write-only address on a thread; the address format belongs to the source. */

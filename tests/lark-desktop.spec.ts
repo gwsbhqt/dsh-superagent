@@ -20,7 +20,7 @@ const line = (overrides: Record<string, unknown> = {}) => ({ message_id: 'm-1', 
 describe('lark-desktop messages', () => {
   it('address the person in a direct message, or with a mention or a reply to them, and keep the chat in meta', () => {
     expect(larkTrigger(line({ chat_kind: 'direct' }), false)).toMatchObject({ id: larkTriggerId('m-1'), source: 'lark-desktop',
-      threads: [{ source: 'lark-desktop', id: 'chat-1:m-1' }], actor: { source: 'lark-desktop', id: 'user-1' }, human: true, addressed: 'direct',
+      threads: [{ source: 'lark-desktop', id: 'chat-1:m-1' }], actor: { source: 'lark-desktop', id: 'user-1', name: 'Ada' }, human: true, addressed: 'direct',
       at: '2026-01-02T03:04:05.000Z', text: 'please take a look', meta: { chatId: 'chat-1', chatName: 'Widgets', direct: true, mentioned: false, muted: false } })
     expect(larkTrigger(line({ is_at_me: true }), true)).toMatchObject({ addressed: 'mention', meta: { mentioned: true, muted: true } })
     expect(larkTrigger(line({ addressed_to_me: true }), false)).toMatchObject({ addressed: 'mention' })

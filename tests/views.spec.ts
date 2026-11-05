@@ -77,6 +77,9 @@ it('names each sender as the Policy lists it, by its id where the id is readable
       { source: 'github', id: 'bob', name: { zh: 'bob', en: 'bob' } }, { source: 'feishu', id: 'ou_bob',
         name: feishuKind.policy!.unnamed!.person },
       { source: 'feishu', id: 'ou_bot', name: feishuKind.policy!.unnamed!.bot }, { source: 'feishu', id: '' }])
+  // A name the Source read shows when no list names the sender, and a list's name wins over it.
+  expect([view.actor({ source: 'feishu', id: 'ou_carol', name: 'Carol' }), view.actor({ source: 'feishu', id: 'OU_ALICE', name: 'Someone' })])
+    .toEqual([{ source: 'feishu', id: 'ou_carol', name: { zh: 'Carol', en: 'Carol' } }, { source: 'feishu', id: 'OU_ALICE', name: { zh: 'Alice', en: 'Alice' } }])
   expect(view.rule('copy')).toEqual({ id: 'copy', name: 'Copy fixes' })
   expect(view.rule('gone')).toEqual({ id: 'gone', name: 'gone' })
 })

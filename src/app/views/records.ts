@@ -38,7 +38,7 @@ export interface Snapshot extends ViewHost {
   threadsOf(ticketId: string): Thread[]
   /** Current rule name, falling back to `id` once a rule has been removed. */
   rule(id: string): { id: string; name: string }
-  /** Resolves sender display name from policy allowlists/bot lists, falling back to the Source kind's unnamed label or raw id. */
+  /** Resolves sender display name from policy allowlists/bot lists, then the name the Source read, falling back to the Source kind's unnamed label or raw id. */
   actor(actor: ActorRef, human?: boolean): ActorView
   /** The owners of follow-ups (see `ownersOf`). */
   owners: Owners
@@ -57,10 +57,11 @@ export function snapshot(host: ViewHost): Snapshot {
   const settings = store.settings()
   const rules = new Map(settings.policy.rules.map(rule => [rule.id, rule.name]))
   const named = (name: string) => ({ zh: name, en: name })
-  const actor = ({ source, id }: ActorRef, human?: boolean): ActorView => {
+  const actor = ({ source, id, name }: ActorRef, human?: boolean): ActorView => {
     if (!id) return { source, id }
     const entry = allowedSender(settings, { source, id }) ?? listedBot(settings, { source, id })
     if (entry) return { source, id, name: named(entry.name || entry.id) }
+    if (name) return { source, id, name: named(name) }
     const unnamed = sources.kind(source)?.policy?.unnamed
     return { source, id, name: unnamed ? human === false ? unnamed.bot : unnamed.person : named(id) }
   }
