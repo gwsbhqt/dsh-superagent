@@ -15,7 +15,9 @@ export const WatchedMessageSchema = z.looseObject({
   chat_kind: z.string().nullish(), sender_id: z.string().nullish(), sender_name: z.string().nullish(),
   sender_is_bot: z.boolean().nullish(), sent_at: z.number().nullish(), text: z.string().nullish(),
   thread_id: z.string().nullish(), reply_to: z.string().nullish(), is_at_me: z.boolean().nullish(),
-  addressed_to_me: z.boolean().nullish(), mentions: z.array(z.string()).nullish(), recalled: z.boolean().nullish(),
+  addressed_to_me: z.boolean().nullish(),
+  // A watch line names whom a message mentions; `lark-desktop message` gives each as an object with its name.
+  mentions: z.array(z.union([z.string(), z.looseObject({ name: z.string().nullish() }).transform(item => item.name ?? '')])).nullish(), recalled: z.boolean().nullish(),
   media: z.array(z.unknown()).nullish(), muted: z.boolean().nullish(), root_id: z.string().nullish(),
   urgent: z.boolean().nullish(), urgent_to_me: z.boolean().nullish(), urgent_type: z.string().nullish(), urgent_at: z.number().nullish(),
   reply_to_me: z.boolean().nullish(),

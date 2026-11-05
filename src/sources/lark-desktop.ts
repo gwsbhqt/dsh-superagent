@@ -195,8 +195,9 @@ async function take(ctx: SourceContext, run: Run, line: string): Promise<void> {
   if (!trigger) return
   // A reply to the person answers one of their messages, which no Trigger holds: read it so the card shows what the reply answers.
   if (message.reply_to_me === true && message.reply_to) {
-    const parent = await ctx.commands.withSignal(signal).run(cli, ['message', message.reply_to, '--no-parent']).then(out => storedMessage(JSON.parse(out)),
-      () => undefined)
+    // Without it the reply is received all the same: a failed or unreadable read leaves the card without the quote.
+    const parent = await ctx.commands.withSignal(signal).run(cli, ['message', message.reply_to, '--no-parent'])
+      .then(out => storedMessage(JSON.parse(out))).catch(() => undefined)
     if (parent) trigger = withQuote(trigger, parent)
   }
   // Lines read after the Source was switched off are dropped; the watch stops shortly after.

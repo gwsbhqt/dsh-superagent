@@ -78,6 +78,7 @@ describe('lark-desktop messages', () => {
     expect(storedMessage({ message: { id: 'm-2', chat_id: 'chat-1', chat_kind: 'group', parent_id: 'm-1', text: 'body' }, context: [] }))
       .toMatchObject({ message_id: 'm-2', reply_to: 'm-1', text: 'body' })
     expect(() => storedMessage({ context: [] })).toThrow()
+    expect(storedMessage({ message: { id: 'm-3', chat_id: 'chat-1', mentions: [{ id: 'u-9', name: 'Someone' }, 'Other'] } }).mentions).toEqual(['Someone', 'Other'])
   })
 })
 
@@ -185,7 +186,9 @@ describe('lark-desktop watch', () => {
     const chats = JSON.stringify([{ chat_id: 'chat-muted', muted: true }, { chat_id: 'chat-open', muted: false },
       // A topic entry of the muted chat says nothing about the chat itself.
       { chat_id: 'chat-muted', thread_id: 't-9', muted: false }])
-    const stored = JSON.stringify({ message: { id: 'm-expired', chat_id: 'chat-open', chat_kind: 'group', sender_id: 'user-2', sent_at: 1, text: 'read again', parent_id: 'm-root' } })
+    // As lark-desktop returns one message: whom it mentions comes as objects, unlike a watch line's names.
+    const stored = JSON.stringify({ message: { id: 'm-expired', chat_id: 'chat-open', chat_kind: 'group', sender_id: 'user-2', sent_at: 1, text: 'read again', parent_id: 'm-root',
+      mentions: [{ id: 'u-9', name: 'Someone' }] } })
     writeFileSync(path, `#!/bin/sh
 echo "$*" >> '${dir}/calls'
 case "$1" in
