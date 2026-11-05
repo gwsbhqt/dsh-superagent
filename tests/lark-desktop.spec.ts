@@ -10,7 +10,9 @@ import { HealthBoard } from '../src/infra/health.ts'
 import { SettingsSchema, anyoneAdmitted, settingsPolicy } from '../src/policy.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
 import { triggerMessage } from '../src/executor/dsh.ts'
-import { AGENT_MARK, JevBatcher, botReply, withQuote, larkDesktopThreadContext, httpJev, jevBatch, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, runLarkDesktop,
+import { KV } from '../src/kv.ts'
+import { CliError } from '../src/infra/commands.ts'
+import { AGENT_MARK, JevBatcher, botReply, sendLarkDesktop, withQuote, larkDesktopThreadContext, httpJev, jevBatch, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, runLarkDesktop,
   storedMessage, withJev, type JevAsk } from '../src/sources/lark-desktop.ts'
 import { testDeployment } from './fixtures/deployment.ts'
 
@@ -131,6 +133,28 @@ describe('thread context for assessments', () => {
   })
 })
 
+describe('the Channel', () => {
+  const outgoing = (address: Record<string, string>) => ({ id: 'out-1', kind: 'reply' as const, text: 'Done', channel: { source: 'lark-desktop', thread: 'lark-desktop:x', address } })
+  const host = (run: (cli: string, args: string[]) => Promise<string>) => ({ commands: { run: vi.fn(run) } }) as never
+  it('replies in the person\'s name under the message, once per outgoing id, in its topic when it has one', async () => {
+    const seen: string[][] = []
+    const ok = host(async (_cli, args) => { seen.push(args); return JSON.stringify({ message_id: 'sent-1' }) })
+    expect(await sendLarkDesktop(ok, outgoing({ chatId: 'c', messageId: 'm-1' }))).toBe('sent')
+    expect(await sendLarkDesktop(ok, outgoing({ chatId: 'c', messageId: 'm-1', topic: 'true' }))).toBe('sent')
+    expect(seen).toEqual([['reply', 'm-1', '--text', 'Done', '--idempotency-key', 'out-1', '--consumer', 'dsh-superagent', '--yes'],
+      ['reply', 'm-1', '--text', 'Done', '--idempotency-key', 'out-1', '--consumer', 'dsh-superagent', '--in-thread', '--yes']])
+  })
+  it('drops a reply whose message is gone, and retries one without a message id or after another failure', async () => {
+    expect(await sendLarkDesktop(host(async () => { throw new CliError('{"error": "message_not_found"}') }), outgoing({ chatId: 'c', messageId: 'm-1' }))).toBe('gone')
+    expect(await sendLarkDesktop(host(async () => ''), outgoing({ chatId: 'c' }))).toBe('gone')
+    await expect(sendLarkDesktop(host(async () => '{}'), outgoing({ chatId: 'c', messageId: 'm-1' }))).rejects.toThrow('without a message id')
+    await expect(sendLarkDesktop(host(async () => { throw new CliError('timed out') }), outgoing({ chatId: 'c', messageId: 'm-1' }))).rejects.toThrow('timed out')
+  })
+  it('gives every message an address under the message itself', () => {
+    expect(larkTrigger(line({ thread_id: 't-1' }), false)!.channel).toEqual({ source: 'lark-desktop', thread: 'lark-desktop:chat-1:t-1', address: { chatId: 'chat-1', messageId: 'm-1', topic: 'true' } })
+  })
+})
+
 describe('Jev, layer one', () => {
   it('asks only about messages that neither address the person nor come from a muted chat', () => {
     expect([needsJev(larkTrigger(line(), false)!), needsJev(larkTrigger(line({ chat_kind: 'direct' }), false)!),
@@ -193,7 +217,7 @@ describe('lark-desktop watch', () => {
 echo "$*" >> '${dir}/calls'
 case "$1" in
   chats) echo '${chats}' ;;
-  message) echo '${stored}' ;;
+  message) echo '${stored}' | sed "s/m-expired/$2/" ;;
   watch) echo 'LARK_DESKTOP_READY' >&2; cat '${dir}/events'; touch '${dir}/printed'; exec sleep 60 ;;
   *) exit 2 ;;
 esac
@@ -215,18 +239,25 @@ esac
       deployment, ready: Promise.resolve(), configured: () => true, receive: (trigger: Trigger) => engine.receive(trigger) }
     return { ctx: sourceContextOf(deps, larkDesktopKind), health: board.all, store }
   }
-  it('takes in what reaches the person, leaves a muted chat out, rereads an expired body, and only reads', async () => {
+  it('takes in what reaches the person, leaves a muted chat out, rereads an expired body, and keeps a line that fails for later', async () => {
     const lines = [line({ message_id: 'm-dm', chat_id: 'dm-1', chat_kind: 'direct' }), line({ message_id: 'm-at', chat_id: 'chat-muted', is_at_me: true }),
       line({ message_id: 'm-muted', chat_id: 'chat-muted' }), line({ message_id: 'm-open', chat_id: 'chat-open' }),
       line({ message_id: 'm-mine', chat_id: 'chat-open', text: `on it ${AGENT_MARK}` }), { message_id: 'm-expired', body_expired: true },
       // The muted message again, once someone urgently called the person on it.
       line({ message_id: 'm-muted', chat_id: 'chat-muted', urgent: true, urgent_to_me: true, addressed_to_me: true, urgent_type: 'app', urgent_at: 7 }),
       line({ message_id: 'm-re', chat_id: 'chat-open', reply_to: 'm-root', reply_to_me: true }),
+      // A line its intake cannot take in: it has no chat.
+      { message_id: 'm-bad', text: 'no chat' },
       { event: 'stale_lamp', message_id: 'm-open' }, { event: 'problem', kind: 'push_missing', detail: 'no push for a while' }]
     writeFileSync(join(dir, 'events'), lines.map(item => JSON.stringify(item)).join('\n') + '\n')
     const { ctx, health, store } = source(cli())
+    // A line kept from an earlier run, which the watch takes in again once it subscribes.
+    store.set(KV.larkDesktop.parked, { 'm-seeded': { line: JSON.stringify({ message_id: 'm-seeded', body_expired: true }), tries: 1, error: 'earlier', at: '' } })
     running = runLarkDesktop(ctx, controller.signal)
     await vi.waitFor(() => expect(health['lark-desktop']).toMatchObject({ state: 'error', detail: expect.stringContaining('push_missing') }), until)
+    await vi.waitFor(() => expect(store.triggers.get(larkTriggerId('m-seeded'))).toBeDefined(), until)
+    expect(Object.keys(store.get(KV.larkDesktop.parked) ?? {})).toEqual(['m-bad'])
+    expect(store.get(KV.larkDesktop.parked)?.['m-bad']).toMatchObject({ tries: 1 })
     const got = (id: string) => store.triggers.get(larkTriggerId(id))
     expect([got('m-dm')?.addressed, got('m-at')?.addressed, got('m-open')?.addressed]).toEqual(['direct', 'mention', undefined])
     expect(store.triggers.disposition(larkTriggerId('m-muted'))?.filtered).toMatchObject({ code: 'lark_desktop_muted' })
@@ -239,7 +270,8 @@ esac
     const calls = readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n')
     // A reply to the person carries the message it answers.
     expect(got('m-re')).toMatchObject({ quoted: { from: 'user-2', text: 'read again' } })
-    expect(calls).toEqual(['chats --all', 'watch dsh-superagent --scope others --no-ack', 'message m-expired --no-parent', 'message m-root --no-parent'])
+    expect(calls.sort()).toEqual(['chats --all', 'watch dsh-superagent --scope others --no-ack', 'message m-expired --no-parent', 'message m-root --no-parent',
+      'message m-seeded --no-parent'].sort())
     controller.abort(); await running; store.close()
   }, 20_000)
   it('scores the chat messages that address no one with Jev, and leaves out the low ones only while it filters', async () => {

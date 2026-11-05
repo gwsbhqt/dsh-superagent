@@ -67,6 +67,8 @@ export function larkTrigger(message: WatchedMessage, muted: boolean, now: () => 
     human: !!message.sender_id && message.sender_is_bot !== true,
     ...(direct ? { addressed: 'direct' as const } : mentioned ? { addressed: 'mention' as const } : {}),
     ...(reach ? { reach } : {}),
+    channel: { source: SOURCE, thread: `${SOURCE}:${larkThreadId(message)}`,
+      address: { chatId: message.chat_id, messageId: message.message_id, ...(message.thread_id ? { topic: 'true' } : {}) } },
     at: new Date(message.sent_at ?? now()).toISOString(), text,
     meta: {
       chatId: message.chat_id, messageId: message.message_id, direct, mentioned, muted: message.muted ?? muted,

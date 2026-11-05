@@ -68,7 +68,7 @@ Both presets run with `danger-full-access` as the operator's OS user and read me
 
    Both configurations share the keychain entry for the app secret. To remove only the bot configuration, delete its directory; do not run `lark-cli config remove`, which would affect the shared secret.
 
-### Lark desktop (optional, read-only)
+### Lark desktop (optional)
 
 The `lark-desktop` Source reads the operator's own Feishu or Lark desktop client through the `lark-desktop` CLI, which must be on `PATH` or named by an absolute path on the Source's card, with the client running in debug mode. It receives what reaches the operator: every direct message, every message that mentions, replies to or urgently calls them, and the other messages of the chats they did not mute. An urgent call on a message that arrived earlier is a new Trigger of that message, even in a muted chat. A message an agent sent as the operator ends with 🤖 and is left out.
 
@@ -76,7 +76,11 @@ Before a chat message that addresses no one is received, Jev, a small model that
 
 A reply to the operator carries the message it answers, read when it arrives, so its card shows what the reply is about. Assessments read the context through the CLI too: the replied-to message, the first message of a topic or reply chain, and the topic, the reply chain or the chat's latest messages.
 
-It is read-only. It runs `lark-desktop watch` with `--no-ack`, so it adds no status emoji, and it has no Channel, so nothing replies through it. Its messages come from people who are on no allowed list, so they only show on the Source and Trigger pages until a Policy admits them.
+It runs `lark-desktop watch` with `--no-ack`, so it adds no status emoji. Its Channel answers in the operator's own name, as a reply to the message a Thread started from, in its topic when it has one: `lark-desktop reply` with the outgoing message's id as the idempotency key, so a retry sends nothing twice, and under the claim name `dsh-superagent`, so another subscriber of the operator does not answer the same message. The CLI ends every such reply with 🤖, which tells people it is the agent and keeps it out of this Source. A reply counts as sent only once the CLI returns its message id; a message or chat that is gone drops it. The Channel calls `lark-desktop` by name, so the CLI must be on the host's `PATH`.
+
+lark-desktop counts a printed line as delivered, so a line whose intake fails is kept, by its message id, and taken in again when the watch subscribes and every five minutes; after five failed attempts it is given up and reported.
+
+No allowed list is needed to act for the operator alone: the admission table's cells for senders not on the list admit what reaches the operator, and the rules decide what becomes work.
 
 Enable the `dsh-superagent-lark-desktop` entry in the profile. A deployment that uses only this Source switches the GitHub Source off, so setup needs no repository or GitHub account:
 

@@ -12,15 +12,18 @@ import { executable } from '../deployment.ts'
 import { withoutDirectory, workerBin } from '../infra/environment.ts'
 import { consumerRetry } from './feishu-loops.ts'
 import { health, sourceContext, type SourceContext } from './host.ts'
+import { KV } from '../kv.ts'
 import type { SourceKind } from './kind.ts'
 import { JEV_KEY_REF, JevBatcher, httpJev, type JevAsk } from './lark-desktop-jev.ts'
 import { larkDesktopThreadContext } from './lark-desktop-read.ts'
+import { larkDesktopChannel } from './lark-desktop-channel.ts'
 import { ExpiredLineSchema, NoticeLineSchema, SOURCE, WatchedMessageSchema, larkScope, larkTrigger, needsJev, storedMessage, withJev,
   botReply, withQuote, type WatchedMessage } from './lark-desktop-trigger.ts'
 
 export { AGENT_MARK, SOURCE, botReply, withQuote, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, storedMessage, withJev } from './lark-desktop-trigger.ts'
 export { JevBatcher, httpJev, jevBatch, type JevAsk } from './lark-desktop-jev.ts'
 export { larkDesktopThreadContext, larkView } from './lark-desktop-read.ts'
+export { CHANNEL_CONSUMER, larkDesktopChannel, sendLarkDesktop } from './lark-desktop-channel.ts'
 
 const LarkDesktopConfigSchema = z.object({
   cli: z.string().trim().min(1).default('lark-desktop'),
@@ -33,8 +36,8 @@ export type LarkDesktopConfig = z.infer<typeof LarkDesktopConfigSchema>
 export const larkDesktopKind: SourceKind<LarkDesktopConfig> = {
   kind: SOURCE,
   title: { zh: '飞书桌面端', en: 'Lark desktop' },
-  description: { zh: '经 lark-desktop 读本人的飞书桌面端：私聊、@ 和回复本人的消息，以及没有设免打扰的群里的消息。只读，不发消息，也不贴表情。',
-    en: 'Reads the person\'s own Feishu or Lark desktop client through lark-desktop: direct messages, messages that mention or reply to them, and the messages of chats they did not mute. Read-only: it sends nothing and adds no emoji.' },
+  description: { zh: '经 lark-desktop 读本人的飞书桌面端：私聊、@ 和回复本人的消息，以及没有设免打扰的群里的消息；回复时以本人身份回到原消息下，末尾带 🤖。不贴表情。',
+    en: 'Reads the person\'s own Feishu or Lark desktop client through lark-desktop: direct messages, messages that mention or reply to them, and the messages of chats they did not mute. It replies in the person\'s name under the message it answers, ending with 🤖, and adds no emoji.' },
   schema: LarkDesktopConfigSchema,
   fields: [
     { key: 'cli', type: 'text', label: { zh: 'lark-desktop 命令', en: 'lark-desktop command' },
@@ -51,6 +54,7 @@ export const larkDesktopKind: SourceKind<LarkDesktopConfig> = {
   health: [SOURCE],
   scope: ({ meta }) => larkScope(meta),
   threadContext: larkDesktopThreadContext,
+  channel: larkDesktopChannel,
   policy: {
     unnamed: { person: { zh: '飞书用户', en: 'Feishu user' }, bot: { zh: '飞书机器人', en: 'Feishu bot' } },
     schema: z.object({
@@ -77,6 +81,40 @@ export const larkDesktopKind: SourceKind<LarkDesktopConfig> = {
         cells: { listedUnaddressed: true, unlistedAddressed: false, unlistedUnaddressed: true } },
     ],
   },
+}
+
+/** How many attempts a watch line whose intake failed gets before the Source gives it up and reports it. */
+const MAX_TRIES = 5
+const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error)
+/**
+ * Keeps a watch line whose intake failed for another attempt: lark-desktop counts a printed line as delivered, so a line
+ * dropped here would never come again. Lines are keyed by their message id; one failing `MAX_TRIES` times is given up.
+ */
+export function park(ctx: SourceContext, line: string, error: unknown): void {
+  let id: string
+  try { id = String((JSON.parse(line) as { message_id?: unknown }).message_id ?? '') } catch { id = '' }
+  if (!id) { ctx.report(SOURCE, { state: 'error', detail: errorText(error) }); return }
+  const parked = { ...ctx.state.get(KV.larkDesktop.parked) }
+  const tries = (parked[id]?.tries ?? 0) + 1
+  if (tries >= MAX_TRIES) delete parked[id]
+  else parked[id] = { line, tries, error: errorText(error).slice(0, 500), at: new Date().toISOString() }
+  ctx.state.set(KV.larkDesktop.parked, parked)
+  ctx.report(SOURCE, { state: 'error', detail: tries >= MAX_TRIES ? `Gave up message ${id} after ${tries} attempts: ${errorText(error)}`
+    : `Message ${id} failed (attempt ${tries} of ${MAX_TRIES}) and will be retried: ${errorText(error)}` })
+}
+/** Takes in the parked lines again, dropping each that now succeeds. */
+async function retryParked(ctx: SourceContext, run: Run): Promise<void> {
+  for (const [id, entry] of Object.entries(ctx.state.get(KV.larkDesktop.parked) ?? {})) {
+    if (run.signal.aborted) return
+    const before = ctx.state.get(KV.larkDesktop.parked) ?? {}
+    if (!before[id]) continue
+    try {
+      await take(ctx, run, entry.line)
+      const parked = { ...ctx.state.get(KV.larkDesktop.parked) }
+      delete parked[id]
+      ctx.state.set(KV.larkDesktop.parked, parked)
+    } catch (error) { park(ctx, entry.line, error) }
+  }
 }
 
 /** How often the Source rereads which chats the person muted. */
@@ -151,16 +189,18 @@ async function consume(ctx: SourceContext, config: LarkDesktopConfig, muted: Mut
   const stop = (): void => { child.kill('SIGTERM') }
   signal.addEventListener('abort', stop, { once: true })
   const timeout = setTimeout(() => { diagnostic = `lark-desktop watch did not subscribe within ${READY_TIMEOUT_MS / 1000} seconds`; stop() }, READY_TIMEOUT_MS)
-  const rereads = setInterval(() => { void refresh() }, MUTED_REFRESH_MS)
+  const run: Run = { cli, config, muted, signal, batcher, scoring }
+  const retry = () => { chain = chain.then(() => retryParked(ctx, run)).catch(error => { ctx.report(SOURCE, { state: 'error', detail: errorText(error) }) }) }
+  const rereads = setInterval(() => { void refresh(); retry() }, MUTED_REFRESH_MS)
   stderr.on('line', (line: string) => {
     if (line.includes('LARK_DESKTOP_READY')) {
       ready = true; clearTimeout(timeout)
       ctx.report(SOURCE, { ...listening, at: new Date().toISOString() })
+      retry()
     } else if (line.trim()) diagnostic = line.slice(0, 4000)
   })
   stdout.on('line', (line: string) => {
-    chain = chain.then(() => take(ctx, { cli, config, muted, signal, batcher, scoring }, line))
-      .catch(error => { ctx.report(SOURCE, { state: 'error', detail: error instanceof Error ? error.message : String(error) }) })
+    chain = chain.then(() => take(ctx, run, line)).catch(error => { park(ctx, line, error) })
   })
   try {
     await new Promise<void>((resolve, reject) => {
@@ -205,7 +245,7 @@ async function take(ctx: SourceContext, run: Run, line: string): Promise<void> {
   const scored: Promise<void> = batcher.score(message)
     .then(score => score === undefined ? trigger : withJev(trigger, score, config.jev === 'filter' || botReply(trigger) ? config.jevMinimum : undefined))
     .then(async result => { if (enabled(ctx)) await receive(ctx, result) })
-    .catch((error: unknown) => { ctx.report(SOURCE, { state: 'error', detail: error instanceof Error ? error.message : String(error) }) })
+    .catch((error: unknown) => { park(ctx, line, error) })
     .finally(() => { scoring.delete(scored) })
   scoring.add(scored)
 }
