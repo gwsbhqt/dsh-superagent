@@ -16,9 +16,9 @@ import type { SourceKind } from './kind.ts'
 import { JEV_KEY_REF, JevBatcher, httpJev, type JevAsk } from './lark-desktop-jev.ts'
 import { larkDesktopThreadContext } from './lark-desktop-read.ts'
 import { ExpiredLineSchema, NoticeLineSchema, SOURCE, WatchedMessageSchema, larkScope, larkTrigger, needsJev, storedMessage, withJev,
-  botReply, type WatchedMessage } from './lark-desktop-trigger.ts'
+  botReply, withQuote, type WatchedMessage } from './lark-desktop-trigger.ts'
 
-export { AGENT_MARK, SOURCE, botReply, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, storedMessage, withJev } from './lark-desktop-trigger.ts'
+export { AGENT_MARK, SOURCE, botReply, withQuote, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, storedMessage, withJev } from './lark-desktop-trigger.ts'
 export { JevBatcher, httpJev, jevBatch, type JevAsk } from './lark-desktop-jev.ts'
 export { larkDesktopThreadContext, larkView } from './lark-desktop-read.ts'
 
@@ -191,8 +191,14 @@ async function take(ctx: SourceContext, run: Run, line: string): Promise<void> {
     if (notice.data.event === 'problem') ctx.report(SOURCE, { state: 'error', detail: `lark-desktop reports ${notice.data.kind ?? 'a problem'}: ${JSON.stringify(notice.data.detail ?? '')}` })
     return
   } else message = WatchedMessageSchema.parse(value)
-  const trigger = larkTrigger(message, muted.chats.get(message.chat_id) === true)
+  let trigger = larkTrigger(message, muted.chats.get(message.chat_id) === true)
   if (!trigger) return
+  // A reply to the person answers one of their messages, which no Trigger holds: read it so the card shows what the reply answers.
+  if (message.reply_to_me === true && message.reply_to) {
+    const parent = await ctx.commands.withSignal(signal).run(cli, ['message', message.reply_to, '--no-parent']).then(out => storedMessage(JSON.parse(out)),
+      () => undefined)
+    if (parent) trigger = withQuote(trigger, parent)
+  }
   // Lines read after the Source was switched off are dropped; the watch stops shortly after.
   if (!batcher || !needsJev(trigger)) { if (enabled(ctx)) await receive(ctx, trigger); return }
   const scored: Promise<void> = batcher.score(message)

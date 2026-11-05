@@ -74,7 +74,7 @@ The `lark-desktop` Source reads the operator's own Feishu or Lark desktop client
 
 Before a chat message that addresses no one is received, Jev, a small model that answers a batch of yes-or-no questions in one request, can score whether the operator needs it. The card's Jev setting chooses Off, Score only, the default, which records the score in the Trigger's `meta.jev`, or Filter, which leaves out a message below the threshold with the reason that Jev judged it unneeded. Its key is the `TYPESAFE_API_KEY` reference of DeepSeek Harness's credentials file. Direct messages, mentions, urgent calls and people's replies never go to Jev. A bot's reply to the operator that neither mentions nor urgently calls them, often a status line such as "in progress", always goes to Jev, and below the threshold it is left out while Jev is on at all. A batch Jev fails on is received unscored.
 
-Assessments read the context through the CLI too: the replied-to message, the first message of a topic or reply chain, and the topic, the reply chain or the chat's latest messages.
+A reply to the operator carries the message it answers, read when it arrives, so its card shows what the reply is about. Assessments read the context through the CLI too: the replied-to message, the first message of a topic or reply chain, and the topic, the reply chain or the chat's latest messages.
 
 It is read-only. It runs `lark-desktop watch` with `--no-ack`, so it adds no status emoji, and it has no Channel, so nothing replies through it. Its messages come from people who are on no allowed list, so they only show on the Source and Trigger pages until a Policy admits them.
 

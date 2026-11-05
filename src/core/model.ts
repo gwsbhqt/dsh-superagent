@@ -36,6 +36,8 @@ export interface Trigger {
   addressed?: 'mention' | 'direct'
   /** Source-declared: a few words on how the message reached whom the agent acts for, such as `replies to the person`; display and model context only, never authority. */
   reach?: string
+  /** Source-declared: the message this one replies to, when no Trigger holds it, such as a message of whom the agent acts for; untrusted text. */
+  quoted?: { from: string; text: string }
   at: string
   text: string
   channel?: ChannelRef

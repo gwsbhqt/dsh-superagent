@@ -77,6 +77,10 @@ export function larkTrigger(message: WatchedMessage, muted: boolean, now: () => 
     },
   }
 }
+/** The Trigger with the message it replies to, as `lark-desktop message` read it, so a model sees what the reply answers. */
+export function withQuote(trigger: Trigger, parent: WatchedMessage): Trigger {
+  return { ...trigger, quoted: { from: parent.sender_name || parent.sender_id || 'unknown', text: (parent.text ?? '').slice(0, 1000) } }
+}
 /**
  * A bot's reply to the person that neither mentions nor urgently calls them: often a status line such as "in progress", so
  * Jev judges it and, while Jev is on, a low score leaves it out whatever the Jev setting says about other chat messages.

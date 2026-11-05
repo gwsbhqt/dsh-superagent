@@ -10,7 +10,7 @@ import { HealthBoard } from '../src/infra/health.ts'
 import { SettingsSchema, anyoneAdmitted, settingsPolicy } from '../src/policy.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
 import { triggerMessage } from '../src/executor/dsh.ts'
-import { AGENT_MARK, JevBatcher, botReply, larkDesktopThreadContext, httpJev, jevBatch, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, runLarkDesktop,
+import { AGENT_MARK, JevBatcher, botReply, withQuote, larkDesktopThreadContext, httpJev, jevBatch, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, runLarkDesktop,
   storedMessage, withJev, type JevAsk } from '../src/sources/lark-desktop.ts'
 import { testDeployment } from './fixtures/deployment.ts'
 
@@ -40,6 +40,8 @@ describe('lark-desktop messages', () => {
     const card = triggerMessage(larkTrigger(line({ sender_is_bot: true, reply_to: 'm-0', reply_to_me: true }), false)!, {})
     expect(card).toMatchObject({ from: 'user-1', from_name: 'Ada', bot: true, reached_by: 'replies to a message of the person' })
     expect(triggerMessage(larkTrigger(line({ chat_kind: 'direct' }), false)!, {})).not.toHaveProperty('bot')
+    const quoted = withQuote(larkTrigger(line({ reply_to: 'm-0', reply_to_me: true }), false)!, { message_id: 'm-0', chat_id: 'chat-1', sender_name: 'Me', text: 'tell me  what\nto try' })
+    expect(triggerMessage(quoted, {})).toMatchObject({ replies_to: { from: 'Me', preview: 'tell me what to try' } })
     expect(larkTrigger(line(), false)).not.toHaveProperty('addressed')
     expect(larkTrigger(line({ sender_is_bot: true }), false)).toMatchObject({ human: false })
   })
@@ -216,6 +218,7 @@ esac
       line({ message_id: 'm-mine', chat_id: 'chat-open', text: `on it ${AGENT_MARK}` }), { message_id: 'm-expired', body_expired: true },
       // The muted message again, once someone urgently called the person on it.
       line({ message_id: 'm-muted', chat_id: 'chat-muted', urgent: true, urgent_to_me: true, addressed_to_me: true, urgent_type: 'app', urgent_at: 7 }),
+      line({ message_id: 'm-re', chat_id: 'chat-open', reply_to: 'm-root', reply_to_me: true }),
       { event: 'stale_lamp', message_id: 'm-open' }, { event: 'problem', kind: 'push_missing', detail: 'no push for a while' }]
     writeFileSync(join(dir, 'events'), lines.map(item => JSON.stringify(item)).join('\n') + '\n')
     const { ctx, health, store } = source(cli())
@@ -231,7 +234,9 @@ esac
     expect(got('m-expired')).toMatchObject({ text: 'read again', threads: [{ id: 'chat-open:m-root' }] })
     // Read-only: it lists the chats, subscribes without status emoji, and reads one message; it writes nothing.
     const calls = readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n')
-    expect(calls).toEqual(['chats --all', 'watch dsh-superagent --scope others --no-ack', 'message m-expired --no-parent'])
+    // A reply to the person carries the message it answers.
+    expect(got('m-re')).toMatchObject({ quoted: { from: 'user-2', text: 'read again' } })
+    expect(calls).toEqual(['chats --all', 'watch dsh-superagent --scope others --no-ack', 'message m-expired --no-parent', 'message m-root --no-parent'])
     controller.abort(); await running; store.close()
   }, 20_000)
   it('scores the chat messages that address no one with Jev, and leaves out the low ones only while it filters', async () => {
