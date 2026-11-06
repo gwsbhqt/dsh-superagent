@@ -33,6 +33,7 @@ export const USER_ERRORS = {
   notAttention: ['refused', 'Attention requires the ticket\'s current attention question in human_action. Routine unfinished work stays internal.'],
   ownerAttention: ['refused', 'This question is for the account owner. It is available in the panel and may be announced by desktop notification; do not send it to the source conversation or retry it elsewhere.'],
   attentionChanged: ['refused', 'This question has already changed or been answered. Reload it before answering.'],
+  recipientUnknown: ['refused', 'This older message did not record whether its sender is human or a bot. Do not send a reply until the recipient is verified.'],
   notQuestion: ['refused', 'An answer must target the original human question, not a worker report or automated trigger'],
   noAnswer: ['refused', 'No worker answer is ready for this human trigger. Wait for the worker\'s report, or request one with orchestrator_ticket_request_status, which acts only on a worker that reported waiting; ordinary progress cannot be relabelled as an answer.'],
   noChannel: ['refused', 'No reply channel for this ticket or trigger'],

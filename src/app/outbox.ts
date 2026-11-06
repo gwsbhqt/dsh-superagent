@@ -5,7 +5,7 @@ import { checkedImText } from '../infra/text.ts'
 import { KV } from '../kv.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { FAILURES_BEFORE_ERROR, Held, Later, type Effects } from './effects.ts'
-import type { Store } from './store.ts'
+import type { Receipt, Store } from './store.ts'
 
 export interface OutboxHost {
   readonly store: Pick<Store, 'atomic' | 'receipts' | 'read' | 'tickets' | 'triggers' | 'settings' | 'get' | 'set'>
@@ -49,6 +49,35 @@ export class Outbox implements OutboxPort {
     const chat = message.channel.address.chatId, originalChat = origin.address.chatId
     return !chat || !originalChat || chat === originalChat
   }
+  private recipientKnown(message: OutboundMessage): boolean {
+    if (message.channel.source !== 'lark-desktop' || !message.ticketId) return true
+    const { store } = this.host
+    const ticket = store.tickets.get(message.ticketId)
+    if (!ticket || !message.channel.address.messageId) return false
+    const ids = new Set([ticket.origin.triggerId, ...(ticket.origin.triggerIds ?? []),
+      ...ticket.inputs.flatMap(input => input.kind === 'trigger' ? [input.triggerId] : [])])
+    const target = [...ids].map(id => store.triggers.get(id)).find(trigger => trigger?.channel?.source === 'lark-desktop'
+      && trigger.channel.address.chatId === message.channel.address.chatId && trigger.channel.address.messageId === message.channel.address.messageId)
+    return typeof target?.meta.senderIsBot === 'boolean'
+  }
+  private keepForOwner(receipt: Receipt, reason: 'internalOnly' | 'recipientUnknown'): void {
+    const { store } = this.host
+    store.atomic(() => {
+      if (receipt.ticketId && (receipt.kind !== 'acknowledgement' || reason === 'recipientUnknown')) {
+        const ticket = store.tickets.get(receipt.ticketId)
+        const noticeKey = `internal-result:${receipt.id}`
+        if (!store.get(KV.larkDesktop.notified)?.[noticeKey]) {
+          const pending = store.get(KV.larkDesktop.pendingNotices) ?? {}
+          const title = reason === 'recipientUnknown' ? '收件人身份未确认' : receipt.kind === 'notice' ? '任务更新' : '任务结果'
+          const message = reason === 'recipientUnknown' ? '原消息没有记录发件人身份，回复没有发送。打开任务查看。'
+            : receipt.text.replace(/\s+/g, ' ').trim().slice(0, 180)
+          pending[noticeKey] = { key: noticeKey, title: ticket ? `${title}：${ticket.title}` : title, message, ticketId: receipt.ticketId }
+          store.set(KV.larkDesktop.pendingNotices, pending)
+        }
+      }
+      store.receipts.settle(receipt, reason)
+    })
+  }
   status(id: string): ReplyStatus | undefined { return this.host.store.receipts.get(id)?.status }
   withdraw(id: string): void {
     const { store, effects } = this.host
@@ -83,23 +112,8 @@ export class Outbox implements OutboxPort {
         return
       }
     }
-    if (receipt.outboundRestricted || this.outboundRestricted(receipt)) {
-      store.atomic(() => {
-        if (receipt.kind !== 'acknowledgement' && receipt.ticketId) {
-          const ticket = store.tickets.get(receipt.ticketId)
-          const noticeKey = `internal-result:${receipt.id}`
-          if (!store.get(KV.larkDesktop.notified)?.[noticeKey]) {
-            const pending = store.get(KV.larkDesktop.pendingNotices) ?? {}
-            const title = receipt.kind === 'notice' ? '任务更新' : '任务结果'
-            pending[noticeKey] = { key: noticeKey, title: ticket ? `${title}：${ticket.title}` : title,
-              message: receipt.text.replace(/\s+/g, ' ').trim().slice(0, 180), ticketId: receipt.ticketId }
-            store.set(KV.larkDesktop.pendingNotices, pending)
-          }
-        }
-        store.receipts.settle(receipt, 'internalOnly')
-      })
-      return
-    }
+    if (receipt.outboundRestricted || this.outboundRestricted(receipt)) { this.keepForOwner(receipt, 'internalOnly'); return }
+    if (!this.recipientKnown(receipt)) { this.keepForOwner(receipt, 'recipientUnknown'); return }
     if (!sources.instance(receipt.channel.source)?.enabled) throw new Later('The Source is off or not installed')
     // Hold later messages for the same ticket and conversation behind an earlier pending message until it exceeds the failure threshold.
     if (store.receipts.behind(id, FAILURES_BEFORE_ERROR)) throw new Later('An earlier message of this ticket to this conversation waits')

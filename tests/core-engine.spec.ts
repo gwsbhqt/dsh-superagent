@@ -1008,6 +1008,22 @@ describe('automatic input', () => {
   })
 })
 describe('replies', () => {
+  it('does not acknowledge or answer an older lark message whose sender identity was not recorded', () => {
+    const h = harness({ gate: () => ({ admissible: true, strength: 'explicit', basis: { via: 'listed' } }) })
+    const old = trigger('1', { source: 'lark-desktop', threads: [{ source: 'lark-desktop', id: 'old' }],
+      actor: { source: 'lark-desktop', id: 'unknown' }, human: true, meta: {},
+      channel: { source: 'lark-desktop', thread: 'lark-desktop:old', address: { chatId: 'old', messageId: 'old' } } })
+    h.engine.receive(old); h.pump()
+    const ticketId = h.decide(h.requests.at(-1)!, { kind: 'accept', title: 'Old message', scope: 'Investigate',
+      reason: 'request', acknowledgement: 'On it' }).ticketId!
+    h.settle()
+    expect(h.outbox).toHaveLength(0)
+    expect(() => h.engine.reply({ purpose: 'acknowledgement', ticketId, triggerId: old.id, text: 'On it' }))
+      .toThrow(new UserError('recipientUnknown'))
+    expect(() => h.engine.reply({ purpose: 'answer', ticketId, triggerId: old.id, text: 'Done' }))
+      .toThrow(new UserError('recipientUnknown'))
+    expect(h.outbox).toHaveLength(0)
+  })
   it('records one owner answer, resumes a blocked ticket, and rejects stale or conflicting submissions', () => {
     const h = harness()
     const ticketId = accepted(h).ticketId!

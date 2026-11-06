@@ -108,6 +108,12 @@ it('enforces a matched rule against the originating chat and keeps the result fo
   expect(h.runtime.store.get(KV.larkDesktop.pendingNotices)?.['internal-result:quiet-result']).toMatchObject({ ticketId: ticket.id })
   expect(send).not.toHaveBeenCalled()
   h.runtime.store.saveSettings({ ...h.runtime.store.settings(), policy: quiet.policy })
+  const otherChannel = { ...channel, thread: 'lark-desktop:colleague', address: { chatId: 'colleague', messageId: 'other' } }
+  h.runtime.store.triggers.save({ ...trigger, id: 'other-trigger', source: 'lark-desktop', channel: otherChannel,
+    meta: { ...trigger.meta, senderIsBot: false } })
+  const updated = h.runtime.store.tickets.get(ticket.id)!
+  updated.inputs.push({ id: 'other-input', kind: 'trigger', triggerId: 'other-trigger', human: true, at: new Date().toISOString() })
+  h.runtime.store.tickets.save(updated)
   h.runtime.outbox.send({ id: 'other-chat', channel: { ...channel, thread: 'lark-desktop:colleague', address: { chatId: 'colleague', messageId: 'other' } },
     text: 'A permitted answer', kind: 'reply', ticketId: ticket.id })
   await h.runtime.pump(); await h.runtime.sendReplies()
@@ -121,6 +127,26 @@ it('enforces a matched rule against the originating chat and keeps the result fo
   expect(send).toHaveBeenCalledOnce()
   expect(h.runtime.store.receipts.get('owner-only')).toMatchObject({ status: 'dropped', dropped: { reason: 'internalOnly' } })
   expect(h.runtime.store.get(KV.larkDesktop.pendingNotices)?.['internal-result:owner-only']).toMatchObject({ ticketId: ticket.id })
+})
+
+it('keeps old messages with unknown senders internal while allowing a known bot result', async () => {
+  const { ticket, trigger } = await h.acceptedTicket(feishu('1', 'Investigate'))
+  const channel = { source: 'lark-desktop', thread: 'lark-desktop:old', address: { chatId: 'old', messageId: 'old' } }
+  h.runtime.store.triggers.save({ ...trigger, source: 'lark-desktop', channel, meta: { ...trigger.meta, senderIsBot: null } })
+  ticket.channels = [channel]
+  h.runtime.store.tickets.save(ticket)
+  h.runtime.sources.register(larkDesktopKind)
+  const send = vi.spyOn(h.runtime.sources, 'send').mockResolvedValue('sent')
+  h.runtime.outbox.send({ id: 'unknown-recipient', channel, text: 'Done', kind: 'reply', ticketId: ticket.id })
+  await h.runtime.pump(); await h.runtime.sendReplies()
+  expect(h.runtime.store.receipts.get('unknown-recipient')).toMatchObject({ status: 'dropped', dropped: { reason: 'recipientUnknown' } })
+  expect(h.runtime.store.get(KV.larkDesktop.pendingNotices)?.['internal-result:unknown-recipient']).toMatchObject({ ticketId: ticket.id })
+  expect(send).not.toHaveBeenCalled()
+  h.runtime.store.triggers.save({ ...trigger, source: 'lark-desktop', channel, meta: { ...trigger.meta, senderIsBot: true } })
+  h.runtime.outbox.send({ id: 'known-bot', channel, text: 'Done', kind: 'reply', ticketId: ticket.id })
+  await h.runtime.pump(); await h.runtime.sendReplies()
+  expect(send).toHaveBeenCalledOnce()
+  expect(h.runtime.outbox.status('known-bot')).toBe('sent')
 })
 
 it('delivers an owner answer from the panel only to the worker', async () => {

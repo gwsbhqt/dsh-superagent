@@ -6,6 +6,9 @@ import type { ChannelRef, Ticket, Trigger } from './model.ts'
 import type { ReplyStatus } from './ports.ts'
 import { EnginePart } from './part.ts'
 
+const verifiedHuman = (trigger: Trigger): boolean => trigger.human
+  && (trigger.source !== 'lark-desktop' || trigger.meta.senderIsBot === false)
+
 /**
  * A message for a Channel, by purpose: an Executor's acknowledgement of a person's request it works on, the answer to a
  * person's question once the worker reported it, the result of a ticket that is `ready`, `completed`, `merged`, or `dropped`,
@@ -41,7 +44,7 @@ export class Replies extends EnginePart {
    * and a person wrote it.
    */
   acknowledgeAccepted(ticketId: string, trigger: Trigger, text: string): void {
-    if (trigger.channel && trigger.human) this.options.outbox.send({ id: key('ack', trigger.id), channel: trigger.channel, text, kind: 'acknowledgement', ticketId })
+    if (trigger.channel && verifiedHuman(trigger)) this.options.outbox.send({ id: key('ack', trigger.id), channel: trigger.channel, text, kind: 'acknowledgement', ticketId })
   }
   /** Withdraw a ticket's question for a person from the outbox, unless it went out already. */
   withdrawAttention(attentionId: string): void { this.options.outbox.withdraw(key('attention-reply', attentionId)) }
@@ -55,7 +58,8 @@ export class Replies extends EnginePart {
     if (!trigger.channel) throw new UserError('ackNoChannel')
     const id = key('ack', trigger.id)
     const existing = this.options.outbox.status(id)
-    if (!existing && !trigger.human) throw new UserError('ackNotPerson')
+    if (!existing && !verifiedHuman(trigger)) throw new UserError(trigger.source === 'lark-desktop' && trigger.meta.senderIsBot == null
+      ? 'recipientUnknown' : 'ackNotPerson')
     // Preserve the automatic or first queued acknowledgement.
     if (!existing) this.options.outbox.send({ id, channel: trigger.channel, text: request.text, kind: 'acknowledgement', ticketId: ticket.id })
     this.takeUp(ticket.id, trigger.id)
@@ -75,7 +79,8 @@ export class Replies extends EnginePart {
     const attention = request.purpose === 'attention' ? ticket?.attention : undefined
     // Attention replies must match the ticket's currently open question text.
     if (request.purpose === 'attention' && (!attention || attention.question !== request.question)) throw new UserError('notAttention')
-    if (request.purpose === 'answer' && !trigger?.human) throw new UserError('notQuestion')
+    if (request.purpose === 'answer' && (!trigger || !verifiedHuman(trigger))) throw new UserError(trigger?.source === 'lark-desktop'
+      && trigger.meta.senderIsBot == null ? 'recipientUnknown' : 'notQuestion')
     const id = attention ? key('attention-reply', attention.id) : key('reply', trigger?.id ?? ticket?.id ?? '', request.text)
     const existing = this.options.outbox.status(id)
     const ready = !ticket || !trigger || ticket.answers?.includes(trigger.id)

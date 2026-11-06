@@ -236,8 +236,9 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
           ...(args.ticket_id ? { ticketId: args.ticket_id } : {}), ...(args.human_action ? { question: args.human_action } : {}) })
         await host.sendReplies()
         const receipt = host.store.receipts.get(reply.id)
-        return { status: host.store.replyStatus(reply.id) ?? reply.status, ...(receipt?.dropped?.reason === 'internalOnly'
-          ? { reason: 'This rule keeps the result in the panel for the account owner; do not send it to the source conversation.' } : {}) }
+        const reason = receipt?.dropped?.reason === 'internalOnly' ? 'This rule keeps the result in the panel for the account owner; do not send it to the source conversation.'
+          : receipt?.dropped?.reason === 'recipientUnknown' ? 'The recipient identity was not recorded; the message was not sent. Do not retry elsewhere.' : undefined
+        return { status: host.store.replyStatus(reply.id) ?? reply.status, ...reason ? { reason } : {} }
       },
     }),
     tool({
