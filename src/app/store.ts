@@ -12,10 +12,10 @@ import { storeReads } from './store-read.ts'
 
 /** A Trigger's position on its thread timeline, ordered by timestamp and then `id` as tie-breaker. */
 export interface TimelinePlace { at: string; id: string }
-/** Why a message was dropped: its conversation can never receive it (`channelGone`), or its Source no longer listens to it (`channelIgnored`). */
-export type DropReason = 'channelGone' | 'channelIgnored'
+/** Why automatic delivery stopped: the target is gone, the Source no longer listens, or a person handled an uncertain result. */
+export type DropReason = 'channelGone' | 'channelIgnored' | 'personResolved'
 /** Outbound message receipt tracked in the outbox from the moment it is queued (`pending`, `sent`, or `dropped`); delivery attempt counts live on its `reply` effect. */
-export interface Receipt extends OutboundMessage { status: ReplyStatus; dropped?: { at: string; reason: DropReason } }
+export interface Receipt extends OutboundMessage { status: ReplyStatus; dropped?: { at: string; reason: DropReason }; deliveryAttempt?: string }
 /** A dropped outbound message receipt, with the timestamp and reason it was dropped. */
 export type Dropped = Receipt & { dropped: { at: string; reason: DropReason } }
 /** Saved settings snapshot with the policy version and ticket notifications it produced (`internal` saves have no origin). */
@@ -267,24 +267,32 @@ export class Store implements Repositories {
       const receipt: Receipt = { ...message, status: 'pending' }
       return Number(this.db.prepare('INSERT OR IGNORE INTO outbox (id, value) VALUES (?, ?)').run(message.id, JSON.stringify(receipt)).changes) > 0
     },
+    /** Persist an attempted delivery before calling a channel whose result may be lost. */
+    beginDelivery: (id: string): void => {
+      this.db.prepare("UPDATE outbox SET value = json_set(value, '$.deliveryAttempt', ?) WHERE id = ? AND value ->> '$.status' = 'pending'")
+        .run(new Date().toISOString(), id)
+    },
+    clearDelivery: (id: string): void => {
+      this.db.prepare("UPDATE outbox SET value = json_remove(value, '$.deliveryAttempt') WHERE id = ? AND value ->> '$.status' = 'pending'").run(id)
+    },
     /**
      * Marks a pending receipt as sent or dropped (with drop reason and timestamp), recreating the receipt if the message
      * was withdrawn while being sent so its ID cannot be queued again.
      */
     settle: (message: OutboundMessage, outcome: 'sent' | DropReason): void => {
-      const settled = outcome === 'sent' ? { status: 'sent' } : { status: 'dropped', dropped: { at: new Date().toISOString(), reason: outcome } }
-      const { id, channel, text, kind, ticketId } = message
+      const settled = outcome === 'sent' ? { status: 'sent', deliveryAttempt: null } : { status: 'dropped', deliveryAttempt: null, dropped: { at: new Date().toISOString(), reason: outcome } }
+      const { id, channel, text, kind, ticketId, resultOf } = message
       const updated = this.db.prepare("UPDATE outbox SET value = json_patch(value, ?) WHERE id = ? AND value ->> '$.status' = 'pending'")
         .run(JSON.stringify(settled), id)
       if (!Number(updated.changes)) this.db.prepare('INSERT OR IGNORE INTO outbox (id, value) VALUES (?, ?)')
-        .run(id, JSON.stringify({ id, channel, text, kind, ...ticketId ? { ticketId } : {}, ...settled }))
+        .run(id, JSON.stringify({ id, channel, text, kind, ...ticketId ? { ticketId } : {}, ...resultOf ? { resultOf } : {}, ...settled }))
     },
     /**
      * Withdraws a pending message that has not yet been sent.
      * @returns Whether a pending message with `id` was waiting and removed.
      */
     withdraw: (id: string): boolean =>
-      Number(this.db.prepare("DELETE FROM outbox WHERE id = ? AND value ->> '$.status' = 'pending'").run(id).changes) > 0,
+      Number(this.db.prepare("DELETE FROM outbox WHERE id = ? AND value ->> '$.status' = 'pending' AND value ->> '$.deliveryAttempt' IS NULL").run(id).changes) > 0,
   }
 }
 export { key, threadKey }

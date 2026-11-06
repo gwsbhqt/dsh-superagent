@@ -12,7 +12,7 @@ import { SourceRegistry } from '../src/sources/registry.ts'
 import { triggerMessage } from '../src/executor/dsh.ts'
 import { KV } from '../src/kv.ts'
 import { CliError } from '../src/infra/commands.ts'
-import { DesktopNotifier, REVIEW_GRACE_MS, ticketLink, type DesktopNotice } from '../src/sources/lark-desktop-notify.ts'
+import { DesktopNotifier, REVIEW_GRACE_MS, desktop, showDesktop, ticketLink, type DesktopNotice } from '../src/sources/lark-desktop-notify.ts'
 import { AGENT_MARK, JevBatcher, botReply, larkParts, sendLarkDesktop, withQuote, larkDesktopThreadContext, httpJev, jevBatch, larkDesktopKind, larkScope, larkThreadId, larkTrigger, larkTriggerId, needsJev, runLarkDesktop,
   storedMessage, withJev, type JevAsk } from '../src/sources/lark-desktop.ts'
 import { testDeployment } from './fixtures/deployment.ts'
@@ -157,22 +157,33 @@ describe('the Channel', () => {
       { text: '@Bo and @Ada', standalone: false, mentions: ['Bo', '1234567:Ada'] }])
     expect(larkParts('plain')).toEqual([{ text: 'plain', standalone: false, mentions: [] }])
   })
-  it('sends each message once by its own key, a message of its own into the chat, and a name no one goes by as plain text', async () => {
+  it('sends separate messages with stable keys and keeps a standalone message in its topic', async () => {
     const seen: string[][] = []
-    const ok = host(async (_cli, args) => {
-      seen.push(args)
-      if (args.includes('--mention') && args.includes('Nobody')) throw new CliError('{"error": "mention_not_found"}')
-      return JSON.stringify({ message_id: `sent-${seen.length}` })
-    })
-    const message = { ...outgoing({ chatId: 'c', messageId: 'm-1' }), text: '[单发] 1\n---\n2 @[Nobody] @[Ada](1234567)' }
+    const ok = host(async (_cli, args) => { seen.push(args); return JSON.stringify({ message_id: `sent-${seen.length}` }) })
+    const message = { ...outgoing({ chatId: 'c', messageId: 'm-1' }), text: '[单发] 1\n---\n2 @[Ada](1234567)' }
     expect(await sendLarkDesktop(ok, message)).toBe('sent')
     expect(seen).toEqual([['send', 'c', '--text', '1', '--idempotency-key', 'out-1-1', '--yes'],
-      ['reply', 'm-1', '--consumer', 'dsh-superagent', '--text', '2 @Nobody @Ada', '--mention', 'Nobody', '--mention', '1234567:Ada', '--idempotency-key', 'out-1-2', '--yes'],
-      ['reply', 'm-1', '--consumer', 'dsh-superagent', '--text', '2 @Nobody @Ada', '--mention', '1234567:Ada', '--idempotency-key', 'out-1-2', '--yes']])
-    // In a topic a message of its own stays in the topic.
+      ['reply', 'm-1', '--consumer', 'dsh-superagent', '--text', '2 @Ada', '--mention', '1234567:Ada', '--idempotency-key', 'out-1-2', '--yes']])
     seen.length = 0
     await sendLarkDesktop(ok, { ...outgoing({ chatId: 'c', messageId: 'm-1', topic: 'true' }), text: '[单发] 1' })
     expect(seen[0]!.slice(0, 2)).toEqual(['reply', 'm-1'])
+  })
+  it.each(['mention_not_found', 'mention_ambiguous'])('does not send a plain-text mention when %s', async code => {
+    const seen: string[][] = []
+    const fail = host(async (_cli, args) => { seen.push(args); throw new CliError(JSON.stringify({ error: code })) })
+    await expect(sendLarkDesktop(fail, { ...outgoing({ chatId: 'c', messageId: 'm-1' }), text: 'Hi @[Nobody]' })).rejects.toThrow(code)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toContain('--mention')
+  })
+  it('does not silently turn a standalone message into a reply when its chat is missing', async () => {
+    const send = vi.fn(async () => '{"message_id":"sent-1"}')
+    await expect(sendLarkDesktop(host(send), { ...outgoing({ messageId: 'm-1' }), text: '[单发] hello' })).rejects.toThrow('无法单独发送')
+    expect(send).not.toHaveBeenCalled()
+  })
+  it('does not discard an entire batch when an earlier part was sent before the target disappeared', async () => {
+    let calls = 0
+    const fail = host(async () => { if (calls++) throw new CliError('{"error": "message_not_found"}'); return '{"message_id":"sent-1"}' })
+    await expect(sendLarkDesktop(fail, { ...outgoing({ chatId: 'c', messageId: 'm-1' }), text: 'first\n---\nsecond' })).rejects.toThrow('message_not_found')
   })
   it('gives every message an address under the message itself', () => {
     expect(larkTrigger(line({ thread_id: 't-1' }), false)!.channel).toEqual({ source: 'lark-desktop', thread: 'lark-desktop:chat-1:t-1', address: { chatId: 'chat-1', messageId: 'm-1', topic: 'true' } })
@@ -185,12 +196,65 @@ describe('desktop notifications', () => {
   function setup(tickets: unknown[]) {
     const state = new Map<string, unknown>()
     const shown: DesktopNotice[] = []
-    const notifier = new DesktopNotifier((notice) => { shown.push(notice) })
-    notifier.use({ state: { get: (key: string) => state.get(key), set: (key: string, value: unknown) => { state.set(key, value) }, keys: () => [] } as never,
-      tickets: { open: () => tickets, get: (id: string) => (tickets as { id: string }[]).find(item => item.id === id) } as never, report: () => {} },
-      { notify: true, notifier: 'terminal-notifier', panelUrl: 'http://127.0.0.1:3082/' })
-    return { notifier, shown }
+    const failures: { id: string; ticketId?: string; error: string }[] = []
+    const ctx = { state: { get: (key: string) => state.get(key), set: (key: string, value: unknown) => { state.set(key, value) }, keys: () => [] },
+      tickets: { open: () => tickets, get: (id: string) => (tickets as { id: string }[]).find(item => item.id === id) },
+      report: vi.fn(), atomic: (work: () => unknown) => work(), outgoingFailures: () => failures }
+    const config = { notify: true, notifier: 'terminal-notifier', panelUrl: 'http://127.0.0.1:3082/' }
+    const notifier = new DesktopNotifier((notice, _config, started) => { shown.push(notice); started() })
+    notifier.use(ctx as never, config)
+    return { notifier, shown, ctx, config, state, failures }
   }
+  it('reports an actual failure to start the notification program', async () => {
+    const error = await new Promise<Error>((resolve, reject) => showDesktop({ key: 'test', title: 'test', message: 'test' },
+      { notify: true, notifier: '/nonexistent-notifier-for-test', panelUrl: '' }, () => reject(new Error('unexpected start')), resolve))
+    expect(error).toMatchObject({ code: 'ENOENT' })
+  })
+  it('keeps an unshown notice in SQLite across a notifier failure and a database restart', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'lark-notice-'))
+    const path = join(directory, 'state.sqlite')
+    const config = { notify: true, notifier: 'terminal-notifier', panelUrl: '' }
+    const contexts = (store: Store) => ({ state: { get: (key: string) => store.get(key), set: (key: string, value: unknown) => store.set(key, value), keys: () => [] },
+      tickets: { open: () => [ticket()], get: () => ticket() }, report: vi.fn(), atomic: (work: () => unknown) => store.atomic(work), outgoingFailures: () => [] })
+    let store = new Store(path)
+    try {
+      let ctx = contexts(store)
+      const bad = new DesktopNotifier((_notice, _config, _started, failed) => failed(new Error('ENOENT')))
+      bad.use(ctx as never, config); bad.check()
+      expect(Object.keys(store.get(KV.larkDesktop.pendingNotices) ?? {})).toHaveLength(1)
+      expect(ctx.report).toHaveBeenCalledWith('lark-desktop-notifications', expect.objectContaining({ state: 'error' }))
+      store.close(); store = new Store(path); ctx = contexts(store)
+      const shown: DesktopNotice[] = []
+      const recovered = new DesktopNotifier((notice, _config, started) => { shown.push(notice); started() })
+      recovered.use(ctx as never, config); recovered.check(); recovered.check()
+      expect(shown).toHaveLength(1)
+      expect(store.get(KV.larkDesktop.pendingNotices)).toEqual({})
+    } finally { store.close(); rmSync(directory, { recursive: true, force: true }) }
+  })
+  it('announces a failed outbound message even when its ticket is no longer open', () => {
+    const { notifier, shown, failures } = setup([])
+    failures.push({ id: 'out-1', error: '结果未确认' })
+    notifier.check(); notifier.check()
+    expect(shown).toEqual([expect.objectContaining({ title: '飞书消息未确认', message: '结果未确认' })])
+  })
+  it('does not let an acknowledgement suppress a later ready report, but a matching result reply does', () => {
+    const reportAt = new Date(1000).toISOString()
+    const ready = ticket({ updatedAt: reportAt, assignments: [{ id: 'a-1', state: 'ended', report: { state: 'ready', summary: 'done', at: reportAt } }] })
+    const first = setup([ready])
+    const message = { id: 'out-1', kind: 'acknowledgement' as const, text: '收到', ticketId: 't-1', channel: { source: 'lark-desktop', thread: 'x', address: {} } }
+    first.notifier.replied(message, ['收到']); first.notifier.check(1000 + REVIEW_GRACE_MS)
+    expect(first.shown.map(item => item.title)).toEqual(['我已替你处理：Answer Ada', '做好了，等你看：Answer Ada'])
+    const second = setup([ready])
+    second.notifier.replied({ ...message, kind: 'reply', resultOf: { assignmentId: 'a-1', reportedAt: reportAt } }, ['完成'])
+    second.notifier.check(1000 + REVIEW_GRACE_MS)
+    expect(second.shown.map(item => item.title)).toEqual(['我已替你处理：Answer Ada'])
+  })
+  it('keeps deduplication for all open tickets even when there are more than 500', () => {
+    const tickets = Array.from({ length: 501 }, (_, index) => ticket({ id: `t-${index}` }))
+    const { notifier, shown } = setup(tickets)
+    notifier.check(); notifier.check()
+    expect(shown).toHaveLength(501)
+  })
   it('links a notice to its ticket on the panel', () => {
     expect([ticketLink('http://127.0.0.1:3082/', 't-1'), ticketLink('', 't-1')]).toEqual(['http://127.0.0.1:3082/#superagent=execution/t-1', undefined])
   })
@@ -350,9 +414,12 @@ esac
     controller.abort(); await running; store.close()
   }, 20_000)
   it('reports a lark-desktop it cannot find, and waits while the Source is off', async () => {
+    const check = vi.spyOn(desktop, 'check').mockImplementation(() => {})
     const { ctx, health, store } = source(join(dir, 'missing'))
     running = runLarkDesktop(ctx, controller.signal)
     await vi.waitFor(() => expect(health['lark-desktop']).toMatchObject({ state: 'error', detail: expect.stringContaining('is not an executable file') }), until)
+    expect(check).toHaveBeenCalled()
+    check.mockRestore()
     store.saveSettings(SettingsSchema.parse({ sources: { 'lark-desktop': { enabled: false, config: {} } } }))
     await vi.waitFor(() => expect(health['lark-desktop']).toMatchObject({ state: 'paused' }), { timeout: 15_000 })
     expect(existsSync(join(dir, 'calls'))).toBe(false)

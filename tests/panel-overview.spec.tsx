@@ -139,12 +139,27 @@ it('lists the unavailable Evals one by one, without the health entry that counts
   expect(text()).not.toContain(zh['health.evals'])
 })
 
+it('lets a person resolve an uncertain message only after seeing what to check', async () => {
+  server.failing = [{ id: 'm1', channel: { source: 'lark-desktop', thread: 'lark-desktop:x', address: {} },
+    text: '发出的内容', attempts: 1, ticketId: undefined, held: true, error: '结果未确认' }]
+  await mount()
+  expect(text()).toContain(zh.problemReplyUncertain)
+  expect(text()).toContain('发出的内容')
+  expect(text()).toContain(zh.problemReplyUncertainHint)
+  await click(zh.resolveOutgoing)
+  expect(text()).toContain(zh.resolveOutgoingConfirm)
+  expect(server.requests.some(request => request.path === 'outgoing/m1/resolve')).toBe(false)
+  await click(zh.confirm)
+  expect(server.requests.some(request => request.path === 'outgoing/m1/resolve' && request.method === 'POST')).toBe(true)
+  expect(text()).not.toContain(zh.problemReplyUncertain)
+})
+
 it('says when no Source is on, an Eval is past its deadline or a message keeps failing, each with the way to it', async () => {
   for (const kind of ['feishu', 'github']) server.settings.sources[kind] = { ...server.settings.sources[kind]!, enabled: false }
   server.threads = [threadSummary({ key: 'github:9', title: '#9 迟迟未决', stage: 'evaluating',
     evaluating: { id: 'v9', triggers: 1, strength: 'inferred', startedAt: '2026-08-31T23:58:00Z', deadline: '2026-09-01T00:00:00Z' } })]
   server.failing = [{ id: 'm1', channel: { source: 'github', thread: 'github:42', address: { number: '42' } },
-    text: '已修复', attempts: 4,
+    text: '已修复', attempts: 4, ticketId: undefined, held: false,
     error: 'HTTP 502 from GitHub' }]
   await mount()
   const titles = () => all('.dt-cards .dt-att-what').map(item => item.textContent)

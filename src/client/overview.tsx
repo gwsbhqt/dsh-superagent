@@ -52,9 +52,14 @@ function ProblemLine({ problem, onChanged }: { problem: Problem; onChanged: () =
         <Button variant="outline" size="sm" icon={<Icon name="dismiss" size={14} />} disabled={post.busy}
           onClick={() => { void post.run(() => call('POST decisions/:id/dismiss', { id: problem.decisionId })) }}>{t('dismiss')}</Button>
       </>)
-    case 'outgoing': return row(t('problemReply', { source: valueLabel(t, 'source', problem.outgoing.channel.source),
-      attempts: problem.outgoing.attempts }),
-      raw(problem.outgoing.error), undefined)
+    case 'outgoing': {
+      const item = problem.outgoing
+      const title = item.held ? t('problemReplyUncertain') : t('problemReply', { source: valueLabel(t, 'source', item.channel.source), attempts: item.attempts })
+      const route: Route | undefined = item.ticketId ? { page: 'execution', id: item.ticketId } : undefined
+      return row(title, <>{item.held && <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: '16rem', overflowY: 'auto' }}>{item.text}</pre>}{raw(item.error)}</>, route, item.held ? t('problemReplyUncertainHint') : undefined,
+        item.held ? <ConfirmButton variant="outline" icon="decision" label={t('resolveOutgoing')} title={t('resolveOutgoing')}
+          message={t('resolveOutgoingConfirm')} onConfirm={async () => { await call('POST outgoing/:id/resolve', { id: item.id }); await onChanged() }} /> : undefined)
+    }
   }
 }
 

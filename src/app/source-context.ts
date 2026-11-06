@@ -64,6 +64,7 @@ export function sourceContextOf(deps: SourceContextDeps, kind: { kind: string; h
     },
     triggers: { get: id => store.triggers.get(id), latest: thread => store.read.threadTriggers(thread, 1)[0] },
     notify: message => { deps.outbox.send(message) },
+    outgoingFailures: () => store.read.failingReplies().filter(item => item.channel.source === kind.kind),
     report: (entry, value) => {
       if (!kind.health.includes(entry)) throw new Error(`The ${kind.kind} Source has no health entry ${entry}`)
       health.get(entry)?.set(value)

@@ -21,6 +21,7 @@ import { SettingsSchema, policyVersion, type SettingsOrigin } from '../src/polic
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { feishuKind } from '../src/sources/feishu.ts'
 import { githubKind, pollRound } from '../src/sources/github.ts'
+import { larkDesktopKind } from '../src/sources/lark-desktop.ts'
 import { CliError, Commands } from '../src/infra/commands.ts'
 import { UserError, key, runningAssignment, said, threadKey, waitsForPerson, type Trigger } from '../src/core/index.ts'
 import { feishuTrigger } from '../src/sources/feishu.ts'
@@ -1160,6 +1161,25 @@ it('shows a failed reply as a problem with its attempts, an error of the reply e
   runtime.outbox.withdraw('stuck')
   expect([outgoing(), runtime.health.reply, runtime.effects.pending('reply', 'stuck')])
     .toEqual([[], expect.objectContaining({ state: 'ready', detail: 'Nothing waiting' }), false])
+})
+
+it('holds a lark message interrupted during delivery across restart until a person resolves it', async () => {
+  await runtime.settings.pause(true, 'panel')
+  runtime.sources.register(larkDesktopKind)
+  runtime.outbox.send({ id: 'interrupted', channel: { source: 'lark-desktop', thread: 'lark-desktop:x', address: { messageId: 'm-1' } }, text: 'Done', kind: 'reply' })
+  runtime.store.receipts.beginDelivery('interrupted')
+  expect(await api('POST', 'outgoing/interrupted/resolve')).toMatchObject({ status: 404 })
+  await restart(); await runtime.ready
+  runtime.sources.register(larkDesktopKind)
+  const send = vi.spyOn(runtime.sources, 'send').mockResolvedValue('sent')
+  await runtime.settings.pause(false, 'panel')
+  await runtime.sendReplies()
+  expect(send).not.toHaveBeenCalled()
+  expect(overviewOf(runtime).problems).toContainEqual({ kind: 'outgoing', outgoing: expect.objectContaining({ id: 'interrupted', held: true }) })
+  expect(await api('POST', 'outgoing/interrupted/resolve')).toEqual({ status: 200, body: { resolved: true } })
+  expect(runtime.store.receipts.get('interrupted')).toMatchObject({ status: 'dropped', dropped: { reason: 'personResolved' } })
+  expect(runtime.effects.pending('reply', 'interrupted')).toBe(false)
+  expect(send).not.toHaveBeenCalled()
 })
 
 describe('the order of a Ticket\'s messages to one conversation', () => {

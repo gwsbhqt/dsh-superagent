@@ -17,7 +17,7 @@ import type { SourceKind } from './kind.ts'
 import { JEV_KEY_REF, JevBatcher, httpJev, type JevAsk } from './lark-desktop-jev.ts'
 import { larkDesktopThreadContext } from './lark-desktop-read.ts'
 import { larkDesktopChannel } from './lark-desktop-channel.ts'
-import { desktop } from './lark-desktop-notify.ts'
+import { desktop, NOTIFY_HEALTH } from './lark-desktop-notify.ts'
 /** How often open tickets are checked for one that waits for the person. */
 const NOTICE_CHECK_MS = 30_000
 import { ExpiredLineSchema, NoticeLineSchema, SOURCE, WatchedMessageSchema, larkScope, larkTrigger, needsJev, storedMessage, withJev,
@@ -63,7 +63,7 @@ export const larkDesktopKind: SourceKind<LarkDesktopConfig> = {
     { key: 'panelUrl', type: 'text', label: { zh: '面板地址', en: 'Panel address' },
       hint: { zh: '这个 DeepSeek Harness 网页的地址，如 http://127.0.0.1:3082/。填了以后，点通知会打开那张工单；不填就只弹通知。', en: 'The address of this DeepSeek Harness web page, such as http://127.0.0.1:3082/. With it, clicking a notification opens its ticket; without it, the notification opens nothing.' } },
   ],
-  health: [SOURCE],
+  health: [SOURCE, NOTIFY_HEALTH],
   scope: ({ meta }) => larkScope(meta),
   threadContext: larkDesktopThreadContext,
   channel: larkDesktopChannel,
@@ -162,26 +162,31 @@ export async function runLarkDesktop(ctx: SourceContext, signal: AbortSignal, op
   await ctx.ready
   if (!ctx.configured()) { ctx.report(SOURCE, ctx.problem ? { state: 'paused', detail: ctx.problem.detail } : health('paused', 'setupPending')); return }
   const muted: Muted = { chats: new Map(), at: 0 }
+  const checkNotices = () => { const config = enabled(ctx); if (config) { desktop.use(ctx, config); desktop.check() } }
+  checkNotices()
+  const notices = setInterval(checkNotices, NOTICE_CHECK_MS)
   let retry: number | undefined
-  while (!signal.aborted) {
-    const config = enabled(ctx)
-    if (!config) {
-      ctx.report(SOURCE, health('paused', 'sourceOff'))
-      await delay(5000, undefined, { signal }).catch(() => {})
-      continue
+  try {
+    while (!signal.aborted) {
+      const config = enabled(ctx)
+      if (!config) {
+        ctx.report(SOURCE, health('paused', 'sourceOff'))
+        await delay(5000, undefined, { signal }).catch(() => {})
+        continue
+      }
+      const running = new AbortController()
+      const check = setInterval(() => { if (JSON.stringify(enabled(ctx)) !== JSON.stringify(config)) running.abort() }, 5000)
+      const stop = () => running.abort()
+      signal.addEventListener('abort', stop, { once: true })
+      const began = Date.now()
+      try { await consume(ctx, config, muted, running.signal, options.jev) }
+      catch (error) { if (!running.signal.aborted) ctx.report(SOURCE, { state: 'error', detail: error instanceof Error ? error.message : String(error) }) }
+      finally { clearInterval(check); signal.removeEventListener('abort', stop) }
+      if (running.signal.aborted) continue
+      retry = consumerRetry(retry, Date.now() - began)
+      await delay(retry, undefined, { signal }).catch(() => {})
     }
-    const running = new AbortController()
-    const check = setInterval(() => { if (JSON.stringify(enabled(ctx)) !== JSON.stringify(config)) running.abort() }, 5000)
-    const stop = () => running.abort()
-    signal.addEventListener('abort', stop, { once: true })
-    const began = Date.now()
-    try { await consume(ctx, config, muted, running.signal, options.jev) }
-    catch (error) { if (!running.signal.aborted) ctx.report(SOURCE, { state: 'error', detail: error instanceof Error ? error.message : String(error) }) }
-    finally { clearInterval(check); signal.removeEventListener('abort', stop) }
-    if (running.signal.aborted) continue
-    retry = consumerRetry(retry, Date.now() - began)
-    await delay(retry, undefined, { signal }).catch(() => {})
-  }
+  } finally { clearInterval(notices) }
 }
 
 async function consume(ctx: SourceContext, config: LarkDesktopConfig, muted: Muted, signal: AbortSignal, jev?: JevAsk): Promise<void> {
@@ -191,8 +196,6 @@ async function consume(ctx: SourceContext, config: LarkDesktopConfig, muted: Mut
     ctx.report(SOURCE, { ...listening, detail: `${listening.detail}; Jev failed, so its batch was received unscored: ${error instanceof Error ? error.message : String(error)}`, at: new Date().toISOString() })
   }) : undefined
   const scoring = new Set<Promise<void>>()
-  desktop.use(ctx, config)
-  const notices = setInterval(() => { desktop.check() }, NOTICE_CHECK_MS)
   const refresh = () => refreshMuted(ctx, cli, muted, signal).catch(() => { /* The previous map stays; an unknown chat counts as not muted. */ })
   if (Date.now() - muted.at > MUTED_REFRESH_MS) await refresh()
   // `--scope others`: direct messages, and every group message but the person's own; `--no-ack` leaves no status emoji.
@@ -222,7 +225,6 @@ async function consume(ctx: SourceContext, config: LarkDesktopConfig, muted: Mut
       child.once('close', code => signal.aborted ? resolve() : reject(new Error(`lark-desktop watch exited (${code}, subscribed=${ready}): ${diagnostic}`)))
     })
   } finally {
-    clearInterval(notices)
     clearTimeout(timeout); clearInterval(rereads); signal.removeEventListener('abort', stop); stdout.close(); stderr.close(); await chain
     await batcher?.flush(); await Promise.all(scoring)
   }

@@ -61,7 +61,8 @@ export function overview(host: ViewHost, health: HealthMap, policyVersionValue: 
     ...unjudged(store, since).map(({ thread, decision }) => ({ kind: 'eval-unavailable' as const, decisionId: decision.id,
       thread: threadSummary(view, thread), reason: decision.reason, triggerId: decision.triggerIds[0] ?? '' })),
     ...store.read.failingReplies().map(item => ({ kind: 'outgoing' as const, outgoing: { id: item.id, channel: item.channel,
-      text: preview(item.text),
+      text: item.channel.source === 'lark-desktop' && item.deliveryAttempt && item.held ? item.text : preview(item.text),
+      ticketId: item.ticketId, held: item.channel.source === 'lark-desktop' && !!item.deliveryAttempt && item.held,
       attempts: item.attempts, error: item.error } })),
   ]
   const open = store.tickets.open().sort(newestFirst)

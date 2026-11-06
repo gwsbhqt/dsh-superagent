@@ -293,6 +293,11 @@ const SourceSave = z.object({ enabled: z.boolean(), config: z.unknown() })
 const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET state': { answer: stateView },
   'GET overview': { answer: overviewView },
+  'POST outgoing/:id/resolve': { answer: ({ params }) => {
+    if (!server.failing.some(item => item.id === params.id && item.held)) return refuse(404, 'No uncertain message to resolve')
+    server.failing = server.failing.filter(item => item.id !== params.id)
+    return { resolved: true }
+  } },
   'GET search': { query: ['q'], answer: async ({ query }) => {
     const q = query.q ?? ''
     await server.searching?.(q)

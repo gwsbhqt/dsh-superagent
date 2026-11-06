@@ -3,6 +3,9 @@
  * Effects reschedules the row after the initial retry delay without incrementing its failure count, and DshExecutor throws it from launch and delivery handlers.
  */
 export class Later extends Error {}
+/** Holds an effect until a person resolves an outcome that cannot safely be retried. */
+export class Held extends Error {}
+export const HELD_DUE = Number.MAX_SAFE_INTEGER
 /** Consecutive failures before an effect kind reports an error, matching the Sources poll failure threshold. */
 export const FAILURES_BEFORE_ERROR = 3
 import type { HealthBoard, HealthEntry } from '../infra/health.ts'
@@ -139,8 +142,9 @@ export class Effects {
       this.store.db.prepare(`UPDATE effect SET due = ? WHERE ${own}`).run(this.now() + handler.retry[0], ...ownRow)
     } else {
       const delay = Math.min(handler.retry[1], handler.retry[0] * 2 ** Math.min(row.attempts, 16))
+      const due = failure.error instanceof Held ? HELD_DUE : this.now() + delay
       this.store.db.prepare(`UPDATE effect SET attempts = attempts + 1, error = ?, due = ? WHERE ${own}`)
-        .run(String(failure.error).slice(0, 1000), this.now() + delay, ...ownRow)
+        .run(String(failure.error).slice(0, 1000), due, ...ownRow)
     }
     if (!this.stopped) this.report(kind)
   }

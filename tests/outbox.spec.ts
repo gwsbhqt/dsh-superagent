@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { OutboundMessage } from '../src/core/index.ts'
 import { Commands } from '../src/infra/commands.ts'
 import type { SourceKind } from '../src/sources/kind.ts'
+import { larkDesktopKind } from '../src/sources/lark-desktop.ts'
 import { feishu, startRuntime, type Host } from './fixtures/host.ts'
 
 let h: Host
@@ -25,6 +26,37 @@ it('holds every message while processing is paused, and sends it once processing
   await h.runtime.pump(); await h.runtime.sendReplies()
   expect(h.runtime.outbox.status('held')).toBe('sent')
   expect(JSON.stringify(lark.mock.calls)).toContain('已合并。')
+})
+
+it('does not resend a lark message when the remote write may have succeeded before an error', async () => {
+  h.runtime.sources.register(larkDesktopKind)
+  const send = vi.spyOn(h.runtime.sources, 'send').mockRejectedValue(new Error('send_unconfirmed'))
+  h.runtime.outbox.send({ id: 'uncertain', channel: { source: 'lark-desktop', thread: 'lark-desktop:x', address: { messageId: 'm-1' } }, text: 'Done', kind: 'reply' })
+  await h.runtime.sendReplies()
+  expect(send).toHaveBeenCalledTimes(1)
+  expect(h.runtime.store.receipts.get('uncertain')).toMatchObject({ status: 'pending', deliveryAttempt: expect.any(String) })
+  expect(h.runtime.store.read.failingReplies()).toEqual([expect.objectContaining({ id: 'uncertain', error: expect.stringContaining('暂停自动重发') })])
+  await at(1_000_000)
+  expect(send).toHaveBeenCalledTimes(1)
+  h.runtime.outbox.withdraw('uncertain')
+  expect(h.runtime.store.receipts.get('uncertain')).toBeDefined()
+})
+
+it('does not allow resolution while a previously failing delivery is still running', async () => {
+  h.runtime.sources.register(larkDesktopKind)
+  await h.runtime.settings.pause(true, 'panel')
+  let finish!: (result: 'sent') => void
+  const pending = new Promise<'sent'>(resolve => { finish = resolve })
+  const send = vi.spyOn(h.runtime.sources, 'send').mockImplementation(() => pending)
+  h.runtime.outbox.send({ id: 'in-flight', channel: { source: 'lark-desktop', thread: 'lark-desktop:x', address: { messageId: 'm-1' } }, text: 'Done', kind: 'reply' })
+  h.runtime.store.db.prepare("UPDATE effect SET attempts = 1, error = 'previous failure' WHERE kind = 'reply' AND key = ?").run('in-flight')
+  try {
+    await h.runtime.settings.pause(false, 'panel')
+    await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
+    expect(h.runtime.store.read.failingReplies()).toContainEqual(expect.objectContaining({ id: 'in-flight', held: false }))
+    expect(h.runtime.outbox.resolveUncertain('in-flight')).toBe(false)
+  } finally { finish('sent'); await h.runtime.sendReplies() }
+  expect(h.runtime.outbox.status('in-flight')).toBe('sent')
 })
 
 it('keeps a message for a Source that is not installed waiting, and sends it once the Source\'s kind registers', async () => {

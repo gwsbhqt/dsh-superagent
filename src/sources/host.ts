@@ -61,6 +61,8 @@ export interface SourceContext {
   }
   triggers: { get(id: string): Trigger | undefined; /** The newest Trigger on a Thread. */ latest(thread: string): Trigger | undefined }
   notify(message: OutboundMessage): void
+  /** Failed outbound messages belonging to this Source. */
+  outgoingFailures(): { id: string; ticketId?: string; error: string }[]
   /** Reports the state of one of this kind's declared health entries; throws for undeclared entry names. */
   report(entry: string, health: Health): void
 }
