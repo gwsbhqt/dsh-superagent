@@ -9,7 +9,7 @@ import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Execu
   from '../core/index.ts'
 import type { Machine } from '../deployment.ts'
 import { runAsWorker, verifyDirectory } from '../infra/environment.ts'
-import type { Settings } from '../policy.ts'
+import { ruleInstructions, type Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
 import { Later, type Effects } from '../app/effects.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
@@ -35,7 +35,7 @@ const SHUTDOWN_STOP_MS = 10_000
 /** How long a worker that goes on after a passing failure waits for a worker slot, or for processing to resume, between looks. */
 const SLOT_WAIT_MS = 5000
 /** True when an input comes from a person (a non-context human trigger or a direct text input such as a status request). */
-const fromPerson = (input?: TicketInput): boolean => input?.kind === 'trigger' ? !!input.human && !input.context : input?.kind === 'text'
+const fromPerson = (input?: TicketInput): boolean => input?.kind === 'trigger' ? !!input.human && !input.context : input?.kind === 'text' || input?.kind === 'owner-answer'
 /**
  * Internal error thrown when a ticket's workspace prepare command fails during launch.
  * DshExecutor catches it to mark the ticket failed immediately rather than retrying automatically, because an existing directory counts as prepared and an automatic retry would treat whatever a failed prepare command left behind in the directory as a prepared workspace.
@@ -101,7 +101,7 @@ export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutco
   const note = outcome.note ? `\nRouting note (not the source request): ${outcome.note}` : ''
   const ruleIds = ticket.mandate.basis.rules
   const rules = settings.policy.rules.filter(rule => ruleIds?.includes(rule.id))
-    .map(rule => `\n- ${rule.name} (${rule.id}): ${rule.instruction}`).join('')
+    .map(rule => `\n- ${rule.name} (${rule.id}): ${ruleInstructions(rule)}`).join('')
   const precedence = rules ? `\nMatched rules; their procedure and communication instructions take precedence over the default acknowledgement and messaging policy for this ticket:${rules}` : ''
   // The origin trigger is delivered alongside the assignment, so `assignment` omits the trigger text.
   const assignment = ticket.mandate.strength === 'inferred' && ruleIds
@@ -120,7 +120,8 @@ const capped = (text: string, limit: number, read: string) =>
  */
 export function triggerMessage(trigger: Trigger, link: { source_url?: string; source_url_read?: string }, note?: string, repliesTo?: Trigger) {
   return { trigger_id: trigger.id, from: trigger.actor.id, ...(trigger.actor.name ? { from_name: trigger.actor.name } : {}),
-    ...(trigger.human ? {} : { bot: true }), ...(trigger.reach ? { reached_by: trigger.reach } : {}), thread: threadKey(trigger.threads[0]!), at: trigger.at,
+    ...(trigger.source === 'lark-desktop' && trigger.meta.senderIsBot === null ? { sender_identity: 'unknown' } : trigger.human ? {} : { bot: true }),
+    ...(trigger.reach ? { reached_by: trigger.reach } : {}), thread: threadKey(trigger.threads[0]!), at: trigger.at,
     ...capped(trigger.text, TRIGGER_CHARS, `trigger/${trigger.id}`), ...link, ...(note ? { routing_note: note } : {}),
     ...(repliesTo ? { replies_to: { trigger_id: repliesTo.id, preview: repliesTo.text.replace(/\s+/g, ' ').slice(0, 160) } }
       : trigger.quoted ? { replies_to: { from: trigger.quoted.from, preview: trigger.quoted.text.replace(/\s+/g, ' ').slice(0, 300) } } : {}) }
@@ -163,6 +164,8 @@ export function inputMessage(input: TicketInput, trigger?: object): string | und
   if (input.kind === 'policy-changed') return policyMessage(input.effect)
   if (input.kind === 'resumed') return RESUMED
   if (input.kind === 'note') return `Note from the orchestrator, for context only: ${input.text}`
+  if (input.kind === 'owner-answer') return JSON.stringify({ kind: 'owner_answer', question: input.question, answer: input.text,
+    instruction: 'The account owner answered this question in the panel. Apply the answer within the ticket scope and matched rules.' })
   return input.kind === 'text' ? input.text : undefined
 }
 /**

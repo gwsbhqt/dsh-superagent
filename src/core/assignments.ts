@@ -13,8 +13,10 @@ export interface WorkerReport {
   summary: string
   /** Open question for a person: a string asks it, `null` clears an open one, and `undefined` keeps the current one. */
   question?: string | null
-  /** The person's message whose request raised the question; routes the question to the channel where it was written. */
+  /** The human message whose author can answer a request for clarification. */
   askedBy?: string
+  /** Whether the question is for the account owner or that human requester. */
+  questionTo?: 'owner' | 'requester'
   /** The person's question this report answers, which the worker thereby takes up; authorizes the main Session to send an answer reply. */
   answers?: string
 }
@@ -100,10 +102,12 @@ export class Assignments extends EnginePart {
     const ticket = this.require(ticketId)
     if (!liveTicket(ticket)) throw new UserError('ticketEnded')
     if (report.question && (report.state === 'ready' || report.answers)) throw new UserError('questionWithResult')
-    if (report.askedBy && !report.question) throw new UserError('askerWithoutQuestion')
+    if ((report.askedBy || report.questionTo) && !report.question) throw new UserError('askerWithoutQuestion')
+    if (report.questionTo === 'requester' && !report.askedBy) throw new UserError('notAsker')
     const person = (id: string, channel: boolean) => {
       const trigger = this.repo.triggers.get(id)
-      return !!trigger?.human && (!channel || !!trigger.channel) && this.reaches(ticket, trigger, false)
+      return !!trigger?.human && (trigger.source !== 'lark-desktop' || trigger.meta.senderIsBot === false)
+        && (!channel || !!trigger.channel) && this.reaches(ticket, trigger, false)
     }
     if (report.askedBy && !person(report.askedBy, true)) throw new UserError('notAsker')
     if (report.answers && !person(report.answers, false)) throw new UserError('notAnswerable')
@@ -112,8 +116,11 @@ export class Assignments extends EnginePart {
     if (assignment.state === 'ended') throw new UserError('assignmentEnded')
     const at = this.now()
     const previous = ticket.attention
-    const ask = (question: string) => ({ id: key('attention', ticketId, question, at), question, ...(report.askedBy ? { triggerId: report.askedBy } : {}) })
-    const asked = report.question && report.question !== previous?.question ? ask(report.question) : previous
+    const sameQuestion = !!report.question && report.question === previous?.question
+    const target = report.questionTo ?? (sameQuestion ? previous?.target : undefined)
+    const asker = report.askedBy ?? (sameQuestion ? previous?.triggerId : undefined)
+    const ask = (question: string) => ({ id: key('attention', ticketId, question, at, target ?? '', asker ?? ''), question, ...(asker ? { triggerId: asker } : {}), ...(target ? { target } : {}) })
+    const asked = report.question && (!sameQuestion || target !== previous?.target || asker !== previous?.triggerId) ? ask(report.question) : previous
     const attention = report.question === null || report.state === 'ready' ? undefined : asked
     if (attention) ticket.attention = attention
     else delete ticket.attention

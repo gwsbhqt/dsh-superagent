@@ -44,7 +44,13 @@ export type TicketListView = ReturnType<typeof ticketList>
 export function ticketRow(view: Snapshot, ticket: Ticket) {
   const line = ticketLine(view, ticket)
   const channel = ticket.channels[0]
-  const reply = line.stage === 'person' && channel ? channelLink(view, channel) : undefined
+  const ownerQuestion = ticket.attention && (ticket.attention.target === 'owner'
+    || (channel?.source === 'lark-desktop' && ticket.attention.target !== 'requester'))
+  const asker = ticket.attention?.target === 'requester' && ticket.attention.triggerId
+    ? view.store.triggers.get(ticket.attention.triggerId) : undefined
+  const verified = asker?.human && (asker.source !== 'lark-desktop' || asker.meta.senderIsBot === false)
+  const replyTo = ticket.attention?.target === 'requester' ? verified ? asker?.channel : undefined : channel
+  const reply = line.stage === 'person' && replyTo && !ownerQuestion ? channelLink(view, replyTo) : undefined
   return { ...line, ...reply ? { reply } : {} }
 }
 /** Executor slot utilization: `running` worker Sessions in an active turn (which occupy slots and are interrupted by a restart), and tickets `queued` for a slot. */
@@ -66,12 +72,12 @@ export function ticketDetail(host: ViewHost, id: string) {
     const shown = trigger && { id: trigger.id, actor: view.actor(trigger.actor, trigger.human), human: trigger.human,
       preview: preview(trigger.text), thread: threadKey(trigger.threads[0]!),
       ...handback ? { handback: { reason: handback.reason, at: handback.at } } : {} }
-    const text = (value.kind === 'text' || value.kind === 'note') && value.text ? { text: markdown(value.text) } : {}
+    const text = (value.kind === 'text' || value.kind === 'note' || value.kind === 'owner-answer') && value.text ? { text: markdown(value.text) } : {}
     return { ...value, ...text, delivered: !ticket.undelivered.includes(value.id), ...shown ? { trigger: shown } : {} }
   }
   // Pass `human = false` for bot-originated mandates so the Source kind still labels the actor as a bot if removed from the policy list.
   const human = ticket.mandate.basis.via !== 'bot'
-  return { ...ticketLine(view, ticket), mandate: { ...ticket.mandate, actor: view.actor(ticket.mandate.actor, human) },
+  return { ...ticketRow(view, ticket), mandate: { ...ticket.mandate, actor: view.actor(ticket.mandate.actor, human) },
     basis: basisFacts(ticket.mandate.basis, view.rule), paused: store.settings().paused,
     channels: ticket.channels.map(channel => channelLink(view, channel)),
     decision: decision ? decisionView(view, decision) : undefined,

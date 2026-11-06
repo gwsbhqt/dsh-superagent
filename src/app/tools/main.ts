@@ -20,7 +20,7 @@ const RoutingNoteSchema = z.string().trim()
 export interface MainToolsHost {
   readonly context: Context
   readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'> & EngineForPeople
-  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings'>
+  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'receipts' | 'settings'>
   readonly prompts: Pick<Prompts, 'preview' | 'save'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'modelRetry'>
   readonly settings: Pick<Settings, 'view' | 'block' | 'save' | 'pause' | 'sync'>
@@ -235,7 +235,9 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         const reply = host.engine.reply({ purpose: args.purpose, text: args.text, ...(args.trigger_id ? { triggerId: args.trigger_id } : {}),
           ...(args.ticket_id ? { ticketId: args.ticket_id } : {}), ...(args.human_action ? { question: args.human_action } : {}) })
         await host.sendReplies()
-        return { status: host.store.replyStatus(reply.id) ?? reply.status }
+        const receipt = host.store.receipts.get(reply.id)
+        return { status: host.store.replyStatus(reply.id) ?? reply.status, ...(receipt?.dropped?.reason === 'internalOnly'
+          ? { reason: 'This rule keeps the result in the panel for the account owner; do not send it to the source conversation.' } : {}) }
       },
     }),
     tool({

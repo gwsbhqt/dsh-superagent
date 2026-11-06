@@ -21,6 +21,7 @@ function fixture(listed: string[]) {
     effect: (effect: () => unknown) => { effect() },
     sessions: { list: { getSnapshot: () => ({ phase: 'ready', byId: Object.fromEntries(listed.map(id => [id, {}])) }) }, refresh: vi.fn(async () => {}) },
     uiWorkspace: { openSession: vi.fn() },
+    layout: { selectPanel: vi.fn() },
     // Omit config form service so Deployment renders read-only.
     get: () => undefined,
   }
@@ -47,7 +48,7 @@ const serve = () => vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     setup: { machine: { stateDir: '/srv/state', worktreeRoot: '/srv/state/worktrees', blockedCommands: [], promptMaxChars: 100000, admissionContextMaxPages: 10, admissionContextTimeoutMs: 15000 }, problem: null, feishuProblem: null, accounts: null } })
   return Response.json({ error: 'unavailable' }, { status: 503 })
 }))
-afterEach(() => { vi.unstubAllGlobals() })
+afterEach(() => { vi.unstubAllGlobals(); sessionStorage.clear(); history.replaceState(null, '', '/') })
 
 it('registers a localized main panel, sidebar entry and Plugin Manager row page, and no settings section', () => {
   const { entries, dictionaries, main, nav } = fixture([])
@@ -56,7 +57,24 @@ it('registers a localized main panel, sidebar entry and Plugin Manager row page,
   expect(Object.keys(dictionaries)).toEqual(['dshSuperagent'])
   expect(main.options).toMatchObject({ key: 'dsh-superagent', locale: 'dshSuperagent' })
   expect(nav.options).toMatchObject({ id: 'dsh-superagent', order: 10, locale: 'dshSuperagent' })
-  expect(nav.options.label?.()).toBe('Superagent')
+  expect(nav.options.label?.()).toBe('数字分身')
+})
+
+it('opens the overview directly from the launcher address', () => {
+  history.replaceState(null, '', '/?token=example#superagent=overview')
+  const { ctx } = fixture([])
+  expect(ctx.layout.selectPanel).toHaveBeenCalledExactlyOnceWith('dsh-superagent')
+  expect(JSON.parse(sessionStorage.getItem('dsh-superagent/route')!)).toEqual({ route: { page: 'overview' }, stack: [] })
+  expect(location.hash).toBe('')
+  expect(location.search).toBe('?token=example')
+})
+
+it('still opens a ticket from a desktop notification', () => {
+  history.replaceState(null, '', '/#superagent=execution/ticket-1')
+  const { ctx } = fixture([])
+  expect(ctx.layout.selectPanel).toHaveBeenCalledExactlyOnceWith('dsh-superagent')
+  expect(JSON.parse(sessionStorage.getItem('dsh-superagent/route')!)).toEqual({ route: { page: 'execution', id: 'ticket-1' }, stack: [{ page: 'execution' }] })
+  expect(location.hash).toBe('')
 })
 
 it('opens a listed Session through the workspace from the main panel', async () => {

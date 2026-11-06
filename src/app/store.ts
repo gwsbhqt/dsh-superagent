@@ -13,7 +13,7 @@ import { storeReads } from './store-read.ts'
 /** A Trigger's position on its thread timeline, ordered by timestamp and then `id` as tie-breaker. */
 export interface TimelinePlace { at: string; id: string }
 /** Why automatic delivery stopped: the target is gone, the Source no longer listens, or a person handled an uncertain result. */
-export type DropReason = 'channelGone' | 'channelIgnored' | 'personResolved'
+export type DropReason = 'channelGone' | 'channelIgnored' | 'personResolved' | 'ownerAttention' | 'internalOnly'
 /** Outbound message receipt tracked in the outbox from the moment it is queued (`pending`, `sent`, or `dropped`); delivery attempt counts live on its `reply` effect. */
 export interface Receipt extends OutboundMessage { status: ReplyStatus; dropped?: { at: string; reason: DropReason }; deliveryAttempt?: string }
 /** A dropped outbound message receipt, with the timestamp and reason it was dropped. */

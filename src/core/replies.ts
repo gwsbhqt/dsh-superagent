@@ -83,6 +83,11 @@ export class Replies extends EnginePart {
     const asker = attention?.triggerId ? this.repo.triggers.get(attention.triggerId) : undefined
     const channel = request.purpose === 'answer' ? trigger!.channel : asker?.channel ?? (ticket ? this.sourceChannel(ticket) : undefined)
     if (!channel) throw new UserError('noChannel')
+    if (request.purpose === 'attention' && attention?.target === 'owner') throw new UserError('ownerAttention')
+    if (request.purpose === 'attention' && channel.source === 'lark-desktop') {
+      if (attention?.target !== 'requester') throw new UserError('ownerAttention')
+      if (!asker?.human || asker.meta.senderIsBot !== false || !asker.channel) throw new UserError('notAsker')
+    }
     const assignment = ticket && request.purpose === 'result' ? latestAssignment(ticket) : undefined
     const resultOf = assignment?.report?.state === 'ready' ? { assignmentId: assignment.id, reportedAt: assignment.report.at } : undefined
     this.options.outbox.send({ id, channel, text: request.text, kind: 'reply', ...ticket ? { ticketId: ticket.id } : {}, ...resultOf ? { resultOf } : {} })

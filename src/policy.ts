@@ -65,8 +65,10 @@ const DEFAULT_RULES = [
 ]
 /** An assessment rule; its instruction may also specify PR reviewers and whether to wait for their approval. */
 export const RuleSchema = z.object({ id: RuleIdSchema, name: z.string().trim().min(1).max(LIMITS.ruleName), enabled: z.boolean(),
-  instruction: z.string().trim().min(1).max(LIMITS.ruleInstruction) }).strict()
+  instruction: z.string().trim().min(1).max(LIMITS.ruleInstruction), noSourceReply: z.boolean().optional(), noExternalReply: z.boolean().optional() }).strict()
 export type Rule = z.infer<typeof RuleSchema>
+/** Includes a rule's source-message restriction wherever its instructions are shown. */
+export const ruleInstructions = (rule: Rule): string => `${rule.instruction}${rule.noExternalReply ? ' Do not send messages to any conversation; report to the account owner internally.' : rule.noSourceReply ? ' Do not send messages to the originating conversation; report to the account owner internally.' : ''}`
 export const RoleModelSchema = z.object({ provider: z.string().trim().min(1), model: z.string().trim().min(1), reasoningEffort: z.string().trim().min(1).optional() }).strict()
 export type RoleModel = z.infer<typeof RoleModelSchema>
 
@@ -157,7 +159,7 @@ export function policyEffects(tickets: readonly Ticket[], old: Settings, now: Se
     const rules = (ticket.mandate.basis.rules ?? []).flatMap((id): NonNullable<PolicyEffect['rules']> => {
       const was = old.policy.rules.find(rule => rule.id === id), is = now.policy.rules.find(rule => rule.id === id)
       if (!is?.enabled) return was?.enabled ? [{ id, name: was.name, change: 'disabled' }] : []
-      return JSON.stringify(was) === JSON.stringify(is) ? [] : [{ id, name: is.name, change: 'changed', instruction: is.instruction }]
+      return JSON.stringify(was) === JSON.stringify(is) ? [] : [{ id, name: is.name, change: 'changed', instruction: ruleInstructions(is) }]
     })
     const effect: PolicyEffect = rules.length ? { rules } : {}
     if (before.revalidate(ticket.mandate) && !after.revalidate(ticket.mandate)) {

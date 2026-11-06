@@ -13,7 +13,7 @@ it('marks each Ticket stage by whom it waits for, and an ended Ticket by its out
     icon] })).toEqual([
     ['待回答', 'warning', 'warning', 'ask'], ['待验收', 'warning', 'warning', 'review'], ['待处理受阻', 'warning', 'warning', 'blocked'],
     ['待处理失败', 'danger', 'error', 'alert'], ['输入未送达', 'warning', 'warning', 'inbox'], ['排队中', 'neutral', 'idle', 'queue'],
-    ['执行中', 'info', 'ongoing', 'running'], ['等待新触发', 'neutral', 'idle', 'clock']])
+    ['执行中', 'info', 'ongoing', 'running'], ['等待新消息', 'neutral', 'idle', 'clock']])
   const ended = (['completed', 'merged', 'closed', 'dropped', 'stopped'] as const).map(outcome => ticketMark(t, { stage: 'ended',
     ended: { at: '', by: outcome === 'stopped' ? 'human' : 'executor', outcome } }))
   expect(ended.map(mark => mark.label)).toEqual(['已完成', 'PR 已合并', 'PR 已关闭（未合并）', '无需处理', '人工停止'])

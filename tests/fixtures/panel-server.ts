@@ -331,7 +331,20 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     'Unavailable Eval not found') },
   'GET tickets': { query: ['state', 'offset', 'limit'], answer: ({ query }) => page(server.tickets[query.state === 'ended' ? 'ended'
     : 'open']) },
-  'GET tickets/:id': { answer: ({ params }) => server.ticketDetails[params.id] ?? refuse(404, 'Ticket not found') },
+  'GET tickets/:id': { answer: ({ params }) => {
+    const found = server.ticketDetails[params.id]
+    if (!found) return refuse(404, 'Ticket not found')
+    const channel = found.channels[0]
+    const ownerQuestion = found.attention && (found.attention.target === 'owner' || (channel?.source === 'lark-desktop' && found.attention.target !== 'requester'))
+    return { ...found, ...found.stage === 'person' && channel && !ownerQuestion ? { reply: channel } : {} }
+  } },
+  'POST tickets/:id/answer': { body: true, answer: ({ params, body }) => {
+    const ticket = server.ticketDetails[params.id]
+    if (!ticket) return refuse(404, 'Ticket not found')
+    if (ticket.attention?.id !== body.attentionId) return refuse(400, 'Question changed', { code: 'attentionChanged', values: {} })
+    server.ticketDetails[params.id] = { ...ticket, attention: undefined }
+    return { answered: true }
+  } },
   'POST tickets/:id/retry': { answer: ({ params }) => {
     const ticket = ticketOf(params.id)
     if (!ticket) return refuse(404, 'Ticket not found')

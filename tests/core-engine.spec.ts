@@ -1008,6 +1008,52 @@ describe('automatic input', () => {
   })
 })
 describe('replies', () => {
+  it('records one owner answer, resumes a blocked ticket, and rejects stale or conflicting submissions', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    h.engine.report(ticketId, { state: 'blocked', summary: 'Needs access', question: 'Can you enable access?', questionTo: 'owner' })
+    const attentionId = h.repo.tickets.get(ticketId)!.attention!.id
+    h.engine.answerOwner(ticketId, attentionId, 'Access enabled')
+    let ticket = h.repo.tickets.get(ticketId)!
+    expect(ticket.attention).toBeUndefined()
+    expect(ticketStage(ticket)).toEqual({ stage: 'working' })
+    expect(ticket.inputs.filter(input => input.kind === 'owner-answer')).toEqual([expect.objectContaining({ attentionId, text: 'Access enabled' })])
+    h.engine.answerOwner(ticketId, attentionId, 'Access enabled')
+    ticket = h.repo.tickets.get(ticketId)!
+    expect(ticket.inputs.filter(input => input.kind === 'owner-answer')).toHaveLength(1)
+    expect(() => h.engine.answerOwner(ticketId, attentionId, 'Different answer')).toThrow(new UserError('attentionChanged'))
+    expect(() => h.engine.answerOwner(ticketId, 'obsolete', 'Access enabled')).toThrow(new UserError('attentionChanged'))
+  })
+  it('keeps owner questions out of the bot chat while allowing verified requester clarification and permitted bot results', () => {
+    const h = harness({ gate: () => ({ admissible: true, strength: 'explicit', basis: { via: 'listed' } }) })
+    const thread = [{ source: 'lark-desktop', id: 'conversation' }]
+    const channel = (messageId: string) => ({ source: 'lark-desktop', thread: 'lark-desktop:conversation', address: { chatId: 'chat', messageId } })
+    h.engine.receive(trigger('1', { source: 'lark-desktop', threads: thread, actor: { source: 'lark-desktop', id: 'bot' },
+      human: false, meta: { senderIsBot: true }, channel: channel('bot-alert') })); h.pump()
+    const ticketId = h.decide(h.requests.at(-1)!, { kind: 'accept', title: 'Alert', scope: 'Investigate', reason: 'alert' }).ticketId!
+    h.settle()
+    h.engine.report(ticketId, { state: 'blocked', summary: 'Needs access', question: 'Please enable access' })
+    expect(() => h.engine.reply({ purpose: 'attention', ticketId, question: 'Please enable access', text: 'Please enable access' }))
+      .toThrow(new UserError('ownerAttention'))
+    expect(h.outbox).toHaveLength(0)
+
+    h.engine.receive(trigger('2', { source: 'lark-desktop', threads: thread, actor: { source: 'lark-desktop', id: 'person' },
+      human: true, meta: { senderIsBot: false }, channel: channel('person-request') })); h.settle()
+    h.engine.report(ticketId, { state: 'progress', summary: 'Needs owner', question: 'Please approve', askedBy: '2', questionTo: 'owner' })
+    expect(() => h.engine.reply({ purpose: 'attention', ticketId, question: 'Please approve', text: 'Please approve' }))
+      .toThrow(new UserError('ownerAttention'))
+    h.engine.report(ticketId, { state: 'progress', summary: 'Needs clarification', question: 'Which version?', askedBy: '2', questionTo: 'requester' })
+    h.engine.reply({ purpose: 'attention', ticketId, question: 'Which version?', text: 'Which version?' })
+    expect(h.outbox.at(-1)?.channel).toEqual(channel('person-request'))
+
+    h.engine.receive(trigger('3', { source: 'lark-desktop', threads: thread, actor: { source: 'lark-desktop', id: 'unknown' },
+      human: true, meta: { senderIsBot: null }, channel: channel('unknown') })); h.settle()
+    expect(() => h.engine.report(ticketId, { state: 'progress', summary: 'Needs clarification', question: 'Which version?',
+      askedBy: '3', questionTo: 'requester' })).toThrow(new UserError('notAsker'))
+    h.engine.report(ticketId, { state: 'ready', summary: 'Done' })
+    h.engine.reply({ purpose: 'result', ticketId, text: 'Done' })
+    expect(h.outbox.at(-1)?.channel).toEqual(channel('bot-alert'))
+  })
   it('acknowledges a person\'s message that reached an open ticket once, and refuses others', () => {
     const h = harness()
     const ticketId = accepted(h).ticketId!

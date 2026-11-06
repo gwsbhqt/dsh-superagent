@@ -1,9 +1,9 @@
 /** Ticket detail page: stage and actions, Mandate details, undelivered/delivered Inputs, subscribed Threads, and Assignments. */
 import { useState, type ReactNode } from 'react'
 import { ApiError, usePoll, type TicketPageView } from './api.ts'
-import { DisclosureRow, Dot, Icon, Tag, type IconName } from './controls.tsx'
+import { Button, DisclosureRow, Dot, Icon, Tag, type IconName } from './controls.tsx'
 import { decisionMark, reportDot, ticketMark } from './marks.ts'
-import { usePanel } from './provider.tsx'
+import { useAction, usePanel } from './provider.tsx'
 import { settingsRoute } from './route.ts'
 import { Earlier, ThreadLine, automatedRuns } from './rows.tsx'
 import { actorName, localized, readableMarkers, reasonLabel, valueLabel, when } from './text.ts'
@@ -23,7 +23,7 @@ function InputLine({ input, earlier = [] }: { input: Input; earlier?: { id: stri
       </button></div> : <div className="dt-row-title">{valueLabel(t, 'input', input.kind)}</div>}
       <div className="dt-row-meta">{input.kind === 'trigger' && <span>{valueLabel(t, 'input', input.kind)}</span>}<When
         at={input.at} /></div>
-      {(input.kind === 'text' || input.kind === 'note') && input.text && <div className="dt-row-quote"><MarkdownLite text={input.text} /></div>}
+      {(input.kind === 'text' || input.kind === 'note' || input.kind === 'owner-answer') && input.text && <div className="dt-row-quote"><MarkdownLite text={input.text} /></div>}
       {trigger?.handback && <Hint>{t('inputHandedBack', { reason: trigger.handback.reason })}</Hint>}
       <Earlier items={earlier} />
     </div>
@@ -105,6 +105,18 @@ function MandateDetails({ ticket, actor }: { ticket: TicketPageView; actor: stri
   </Section>
 }
 
+function OwnerAnswer({ id, attentionId, paused, reload }: { id: string; attentionId: string; paused: boolean; reload: () => Promise<void> }) {
+  const { t, call } = usePanel()
+  const [text, setText] = useState('')
+  const action = useAction(() => call('POST tickets/:id/answer', { id, body: { attentionId, text } }), { reload })
+  return <form onSubmit={event => { event.preventDefault(); if (text.trim()) void action.run() }}>
+    <label>{t('answerOwnerLabel')}<textarea aria-label={t('answerOwnerLabel')} className="dt-textarea" rows={3} maxLength={10000} value={text}
+      onChange={event => setText(event.target.value)} /></label>
+    <Hint>{t('answerOwnerHint')}{paused && ` ${t('answerOwnerPaused')}`}</Hint>
+    <Button type="submit" variant="primary" disabled={action.busy || !text.trim()}>{t('answerOwnerSend')}</Button>
+  </form>
+}
+
 export function TicketPage({ id }: { id: string }) {
   const { t, call } = usePanel()
   const { data, error, reload } = usePoll(() => call('GET tickets/:id', { id }), [id])
@@ -125,6 +137,8 @@ export function TicketPage({ id }: { id: string }) {
     return reason ? t('endedAt', { time, outcome, reason }) : t('endedAtShort', { time, outcome })
   })()
   const channel = data.channels[0]
+  const ownerQuestion = data.attention && (data.attention.target === 'owner'
+    || (channel?.source === 'lark-desktop' && data.attention.target !== 'requester'))
   return <>
     <PageHead title={data.title}>
       {opening?.url && <ActionLink href={opening.url}>{t('openThread', { source: valueLabel(t, 'source', opening.source) })}</ActionLink>}
@@ -143,9 +157,10 @@ export function TicketPage({ id }: { id: string }) {
     {ended && <Hint>{ended}</Hint>}
     {data.attention && <div className="dt-banner"><span className="dt-banner-label">{t('attentionPrefix')}</span><MarkdownLite
       text={data.attention.question} />
-      {channel && <div className="dt-banner-actions">
-        <ActionLink href={channel.url} icon="message">{t('answerIn', { source: valueLabel(t, 'source', channel.source) })}</ActionLink>
-      </div>}</div>}
+      {ownerQuestion ? <OwnerAnswer key={data.attention.id} id={id} attentionId={data.attention.id} paused={data.paused} reload={reload} />
+        : data.reply ? <div className="dt-banner-actions">
+          <ActionLink href={data.reply.url} icon="message">{t('answerIn', { source: valueLabel(t, 'source', data.reply.source) })}</ActionLink>
+        </div> : <Hint>{t('attentionMissingRequester')}</Hint>}</div>}
     {/* Ordinary progress stays in the Session/Channels; only a report that halted work (blocked/failed) is shown here. */}
     {data.actions.retry && data.summary && <p className={`dt-banner${failed ? ' dt-danger' : ''}${failedText ? ' dt-mono' : ''}`}>
       <span className="dt-banner-label">{t(failed ? 'failedPrefix' : 'blockedPrefix')}</span>{data.summary}

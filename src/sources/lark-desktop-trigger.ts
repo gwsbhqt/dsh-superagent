@@ -64,7 +64,7 @@ export function larkTrigger(message: WatchedMessage, muted: boolean, now: () => 
   return {
     id: larkTriggerId(message.message_id, urgent ? message.urgent_at ?? 0 : undefined), source: SOURCE, threads: [{ source: SOURCE, id: larkThreadId(message) }],
     actor: { source: SOURCE, id: message.sender_id ?? '', ...(message.sender_name ? { name: message.sender_name } : {}) },
-    human: !!message.sender_id && message.sender_is_bot !== true,
+    human: !!message.sender_id && message.sender_is_bot === false,
     ...(direct ? { addressed: 'direct' as const } : mentioned ? { addressed: 'mention' as const } : {}),
     ...(reach ? { reach } : {}),
     channel: { source: SOURCE, thread: `${SOURCE}:${larkThreadId(message)}`,
@@ -72,6 +72,7 @@ export function larkTrigger(message: WatchedMessage, muted: boolean, now: () => 
     at: new Date(message.sent_at ?? now()).toISOString(), text,
     meta: {
       chatId: message.chat_id, messageId: message.message_id, direct, mentioned, muted: message.muted ?? muted,
+      senderIsBot: message.sender_is_bot ?? null,
       ...(replyOnly ? { replyOnly: true } : {}),
       ...(urgent ? { urgent: true, ...(message.urgent_type ? { urgentType: message.urgent_type } : {}) } : {}),
       ...(message.chat_name ? { chatName: message.chat_name } : {}), ...(message.sender_name ? { senderName: message.sender_name } : {}),
@@ -89,7 +90,7 @@ export function withQuote(trigger: Trigger, parent: WatchedMessage): Trigger {
  * A bot's reply to the person that neither mentions nor urgently calls them: often a status line such as "in progress", so
  * Jev judges it and, while Jev is on, a low score leaves it out whatever the Jev setting says about other chat messages.
  */
-export const botReply = (trigger: Trigger): boolean => !trigger.human && trigger.meta.replyOnly === true
+export const botReply = (trigger: Trigger): boolean => trigger.meta.senderIsBot === true && trigger.meta.replyOnly === true
 /** Whether a message goes to Jev: a bot's reply to the person, or one that neither addresses the person nor comes from a muted chat. */
 export const needsJev = (trigger: Trigger): boolean => botReply(trigger)
   || (trigger.meta.direct !== true && trigger.meta.mentioned !== true && trigger.meta.muted !== true)

@@ -13,12 +13,12 @@ When several candidates are waiting, decide those whose card already settles the
 That call may also ignore a proactive candidate whose card already shows it touches no enabled rule, as admission says.
 Do not expand a request's scope, add implementation plans, acceptance criteria or policy checklists: workers derive requirements from the original source.
 
-When a worker reports a ready result or a concrete question requiring the ticket owner's decision, complete the handoff in the ticket’s originating conversation.
-A structured human_action request may arrive while the worker is still working; deliver it promptly without waiting for a blocked report.
-Read ticket routing metadata and the concise worker report.
-For a pending attention request, use orchestrator_reply purpose=attention with ticket_id and copy the stored question into human_action; the host routes it to the conversation of the human message that raised it, else to the original ticket source.
+When a worker reports a result or a question, follow the ticket's matched communication rules.
+A human_action may arrive while work continues; the panel and enabled desktop notifications show questions for the account owner.
+For lark-desktop, send attention only when its target is requester and it identifies the human who can clarify; otherwise keep it for the owner.
+For other Sources, use orchestrator_reply purpose=attention with ticket_id and the exact stored question in human_action.
 Ordinary progress remains internal.
-Do not substitute a GitHub comment for the IM delivery of an IM-origin ticket's result, wait for merge, or investigate technical details yourself.
+When a ticket's rule permits an IM result, do not substitute a GitHub comment; do not wait for merge or investigate technical details yourself.
 Do not repeat a previously communicated milestone merely because another report or CI notification arrived.
 
 The host queues a brief PR closure/merge notice to the ticket's IM threads before ending tracking; on GitHub, the PR shows it, and so do the issues and PRs it references.

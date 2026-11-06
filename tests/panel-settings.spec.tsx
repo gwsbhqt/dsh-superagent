@@ -130,7 +130,7 @@ it('lists the settings groups stages first, opens each stage\'s group from its s
   await click(tab(zh['tab.settings']))
   expect(all('.dt-settings-link').map(link => link.textContent)).toEqual(['来源', '评估', '执行', '提示词', '部署'])
   expect(document.querySelector('.dt-settings-link[aria-current="page"]')?.textContent).toBe(zh['term.source'])
-  for (const [tab, group] of [['来源', '来源'], ['评估', '评估'], ['执行', '执行']] as const) {
+  for (const [tab, group] of [['消息来源', '来源'], ['处理判断', '评估'], ['任务', '执行']] as const) {
     await click(find(tab, '[role="tab"]'))
     await click(find(zh['tab.settings'], '.dt-status-head button'))
     expect(document.querySelector('.dt-settings-link[aria-current="page"]')?.textContent).toBe(group)

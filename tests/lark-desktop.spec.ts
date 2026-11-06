@@ -19,7 +19,7 @@ import { testDeployment } from './fixtures/deployment.ts'
 
 /** A message as `lark-desktop watch` prints it; the names and ids are made up. */
 const line = (overrides: Record<string, unknown> = {}) => ({ message_id: 'm-1', chat_id: 'chat-1', chat_name: 'Widgets', chat_kind: 'group',
-  sender_id: 'user-1', sender_name: 'Ada', sent_at: Date.parse('2026-01-02T03:04:05Z'), text: 'please take a look', ...overrides })
+  sender_id: 'user-1', sender_name: 'Ada', sender_is_bot: false, sent_at: Date.parse('2026-01-02T03:04:05Z'), text: 'please take a look', ...overrides })
 
 describe('lark-desktop messages', () => {
   it('address the person in a direct message, or with a mention or a reply to them, and keep the chat in meta', () => {
@@ -46,7 +46,11 @@ describe('lark-desktop messages', () => {
     const quoted = withQuote(larkTrigger(line({ reply_to: 'm-0', reply_to_me: true }), false)!, { message_id: 'm-0', chat_id: 'chat-1', sender_name: 'Me', text: 'tell me  what\nto try' })
     expect(triggerMessage(quoted, {})).toMatchObject({ replies_to: { from: 'Me', preview: 'tell me what to try' } })
     expect(larkTrigger(line(), false)).not.toHaveProperty('addressed')
-    expect(larkTrigger(line({ sender_is_bot: true }), false)).toMatchObject({ human: false })
+    expect(larkTrigger(line({ sender_is_bot: true }), false)).toMatchObject({ human: false, meta: { senderIsBot: true } })
+    const unknown = larkTrigger(line({ sender_is_bot: null }), false)!
+    expect(unknown).toMatchObject({ human: false, meta: { senderIsBot: null } })
+    expect(triggerMessage(unknown, {})).toMatchObject({ sender_identity: 'unknown' })
+    expect(triggerMessage(unknown, {})).not.toHaveProperty('bot')
   })
   it('leave out a recalled message and one an agent sent as the person', () => {
     expect(larkTrigger(line({ recalled: true }), false)).toBeUndefined()

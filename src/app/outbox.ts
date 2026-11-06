@@ -1,13 +1,14 @@
 /** Reliable outbound message delivery backed by persistent receipts and retried reply effects. */
-import type { OutboundMessage, Outbox as OutboxPort, ReplyStatus } from '../core/index.ts'
+import { key, type OutboundMessage, type Outbox as OutboxPort, type ReplyStatus } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
 import { checkedImText } from '../infra/text.ts'
+import { KV } from '../kv.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { FAILURES_BEFORE_ERROR, Held, Later, type Effects } from './effects.ts'
 import type { Store } from './store.ts'
 
 export interface OutboxHost {
-  readonly store: Pick<Store, 'atomic' | 'receipts' | 'read'>
+  readonly store: Pick<Store, 'atomic' | 'receipts' | 'read' | 'tickets' | 'triggers' | 'settings' | 'get' | 'set'>
   readonly effects: Pick<Effects, 'enqueue' | 'cancel' | 'handle' | 'idle'>
   readonly sources: Pick<SourceRegistry, 'instance' | 'channelAllowed' | 'send'>
   readonly commands: Commands
@@ -28,7 +29,25 @@ export class Outbox implements OutboxPort {
     // Validate IM reply length here; acknowledgements are already validated when decided.
     if (message.kind === 'reply' && message.channel.source === 'feishu') checkedImText(message.text)
     const { store, effects } = this.host
-    store.atomic(() => { if (store.receipts.add(message)) effects.enqueue('reply', message.id, {}) })
+    store.atomic(() => {
+      const secured = this.outboundRestricted(message) ? { ...message, outboundRestricted: true as const } : message
+      if (store.receipts.add(secured)) effects.enqueue('reply', message.id, {})
+    })
+  }
+  private outboundRestricted(message: OutboundMessage): boolean {
+    const { store } = this.host
+    const ticket = message.ticketId ? store.tickets.get(message.ticketId) : undefined
+    const rules = ticket?.mandate.basis.rules ?? []
+    if (!ticket) return false
+    const matched = store.settings().policy.rules.filter(rule => rules.includes(rule.id))
+    if (matched.some(rule => rule.noExternalReply)) return true
+    if (!matched.some(rule => rule.noSourceReply)) return false
+    const origin = store.triggers.get(ticket.origin.triggerId)?.channel ?? ticket.channels[0]
+    if (!origin) return message.channel.source === ticket.mandate.actor.source
+    if (message.channel.source !== origin.source) return false
+    if (origin.source !== 'lark-desktop') return message.channel.thread === origin.thread
+    const chat = message.channel.address.chatId, originalChat = origin.address.chatId
+    return !chat || !originalChat || chat === originalChat
   }
   status(id: string): ReplyStatus | undefined { return this.host.store.receipts.get(id)?.status }
   withdraw(id: string): void {
@@ -54,6 +73,33 @@ export class Outbox implements OutboxPort {
     if (receipt?.status !== 'pending') return
     const guarded = receipt.channel.source === 'lark-desktop'
     if (guarded && receipt.deliveryAttempt) throw new Held('飞书消息上次发送时结果未确认，已暂停自动重发；请先查看飞书，确认每条消息的实际情况。')
+    const attention = receipt.ticketId ? store.tickets.get(receipt.ticketId)?.attention : undefined
+    if (guarded && attention && receipt.id === key('attention-reply', attention.id)) {
+      const asker = attention.target === 'requester' && attention.triggerId ? store.triggers.get(attention.triggerId) : undefined
+      if (!asker?.human || asker.meta.senderIsBot !== false || !asker.channel || asker.channel.thread !== receipt.channel.thread
+        || asker.channel.source !== receipt.channel.source || asker.channel.address.chatId !== receipt.channel.address.chatId
+        || asker.channel.address.messageId !== receipt.channel.address.messageId) {
+        store.receipts.settle(receipt, 'ownerAttention')
+        return
+      }
+    }
+    if (receipt.outboundRestricted || this.outboundRestricted(receipt)) {
+      store.atomic(() => {
+        if (receipt.kind !== 'acknowledgement' && receipt.ticketId) {
+          const ticket = store.tickets.get(receipt.ticketId)
+          const noticeKey = `internal-result:${receipt.id}`
+          if (!store.get(KV.larkDesktop.notified)?.[noticeKey]) {
+            const pending = store.get(KV.larkDesktop.pendingNotices) ?? {}
+            const title = receipt.kind === 'notice' ? '任务更新' : '任务结果'
+            pending[noticeKey] = { key: noticeKey, title: ticket ? `${title}：${ticket.title}` : title,
+              message: receipt.text.replace(/\s+/g, ' ').trim().slice(0, 180), ticketId: receipt.ticketId }
+            store.set(KV.larkDesktop.pendingNotices, pending)
+          }
+        }
+        store.receipts.settle(receipt, 'internalOnly')
+      })
+      return
+    }
     if (!sources.instance(receipt.channel.source)?.enabled) throw new Later('The Source is off or not installed')
     // Hold later messages for the same ticket and conversation behind an earlier pending message until it exceeds the failure threshold.
     if (store.receipts.behind(id, FAILURES_BEFORE_ERROR)) throw new Later('An earlier message of this ticket to this conversation waits')

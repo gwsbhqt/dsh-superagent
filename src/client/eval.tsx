@@ -57,6 +57,17 @@ function RuleRow({ rule, expanded, onToggle, onChange, onDuplicate, onRemove }: 
             onChange={event => onChange({ ...rule, instruction: event.target.value })} />
         </Field>
         <div className="dt-actions">
+          <Switch checked={rule.noSourceReply === true} onChange={noSourceReply => onChange({ ...rule, noSourceReply: noSourceReply || undefined })}
+            label={t('ruleNoSourceReply')} />
+          <span>{t('ruleNoSourceReply')}</span>
+        </div>
+        <div className="dt-actions">
+          <Switch checked={rule.noExternalReply === true} onChange={noExternalReply => onChange({ ...rule, noExternalReply: noExternalReply || undefined })}
+            label={t('ruleNoExternalReply')} />
+          <span>{t('ruleNoExternalReply')}</span>
+        </div>
+        <Hint>{t('ruleNoSourceReplyHint')}</Hint>
+        <div className="dt-actions">
           <Button variant="ghost" size="sm" icon={<Icon name="copy" />} onClick={onDuplicate}>{t('duplicate')}</Button>
           <Button variant="ghost" size="sm" icon={<Icon name="trash" />} onClick={onRemove}>{t('remove')}</Button>
         </div>

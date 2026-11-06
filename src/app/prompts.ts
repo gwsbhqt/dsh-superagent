@@ -1,7 +1,7 @@
 /** Manages versioned role prompts, behavioral policies, and operational skills independently of access settings. */
 import { z } from 'zod'
 import { UserError, key } from '../core/index.ts'
-import { policyVersion, type Settings, type SettingsOrigin } from '../policy.ts'
+import { policyVersion, ruleInstructions, type Settings, type SettingsOrigin } from '../policy.ts'
 import { masterPrompt, workerPrompt, sharedPrompt, guides, mainAdmissionPolicy, handoffPolicy, teamDefaults, sourceSkills, cliNotes } from './context.ts'
 import { environmentLines, type Variable } from './execution-environment.ts'
 import { promptsNotice } from './notices.ts'
@@ -91,7 +91,7 @@ export function environmentSection(config: PromptConfig, variables: Variable[] |
  */
 export function policySection(settings: Settings, config: PromptConfig = defaultPrompts()): { key: string; text: string } {
   const line = (text: string) => text.replace(/\s*\n\s*/g, ' ')
-  const rules = settings.policy.rules.filter(rule => rule.enabled).map(({ id, name, instruction }) => `- ${line(name)} (${id}): ${line(instruction)}`)
+  const rules = settings.policy.rules.filter(rule => rule.enabled).map(rule => `- ${line(rule.name)} (${rule.id}): ${line(ruleInstructions(rule))}`)
   const part = rules.length ? 'runtime/policy' : 'runtime/policy/none'
   return { key: part, text: fill(builtIn(config, part), { version: policyVersion(settings), mode: settings.eval.mode, rules: rules.join('\n') }) }
 }

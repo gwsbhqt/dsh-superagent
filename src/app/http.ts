@@ -196,6 +196,11 @@ function routes(runtime: HttpHost): Routes {
       return ticketList(views(runtime), state, offset, limit)
     },
     'GET tickets/:id': ({ params }) => ticketPage(runtime, params.id),
+    'POST tickets/:id/answer': async ({ params, body }) => {
+      const answer = z.object({ attentionId: z.string().min(1), text: z.string().trim().min(1).max(10000) }).strict().parse(await body())
+      runtime.engine.answerOwner(ticket(params.id), answer.attentionId, answer.text)
+      return { answered: true }
+    },
     'POST tickets/:id/retry': ({ params }) => { const id = ticket(params.id); runtime.engine.retryTicket(id); return { retried: true } },
     'POST tickets/:id/stop': ({ params }) => { const id = ticket(params.id); runtime.engine.stopTicket(id); return { stopped: true } },
     'POST executor/pause': async ({ body }) => runtime.settings.pause(z.object({ paused: z.boolean() }).parse(await body()).paused, 'panel'),

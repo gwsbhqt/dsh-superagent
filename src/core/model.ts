@@ -261,6 +261,7 @@ export type TicketInput =
   /** A human's message on one of its Threads resumed the ended ticket under its unchanged Mandate. */
   | { id: string; kind: 'resumed'; triggerId: string; at: string }
   | { id: string; kind: 'text'; text: string; at: string }
+  | { id: string; kind: 'owner-answer'; attentionId: string; question: string; text: string; at: string }
   /** A fact the main Session gave the ticket from other work: context, which asks for nothing and grants nothing. */
   | { id: string; kind: 'note'; text: string; at: string }
 
@@ -279,8 +280,8 @@ export interface PolicyEffect {
 export type TicketEndBy = 'executor' | 'human'
 /** How a ticket ended: with its result, with its pull request merged or closed unmerged, with nothing to do, or stopped by a person. */
 export type TicketOutcome = 'completed' | 'merged' | 'closed' | 'dropped' | 'stopped'
-/** A question for a person; `triggerId` is the human message that raised it, whose conversation it goes back to. */
-export interface Attention { id: string; question: string; triggerId?: string }
+/** A question for the account owner or for a specific person who can clarify their request. */
+export interface Attention { id: string; question: string; triggerId?: string; target?: 'owner' | 'requester' }
 /** Ticket aggregate: an authorized work item with its assignments, channels, thread bindings, and inputs. */
 export interface Ticket {
   id: string
@@ -358,5 +359,6 @@ export function readUntil(ticket: Pick<Ticket, 'assignments'>, progress = true):
 export function waitsForPerson(ticket: Ticket): boolean {
   const report = latestAssignment(ticket)?.report
   if (report?.state !== 'blocked' && report?.state !== 'failed') return false
-  return !ticket.inputs.some(input => input.kind === 'trigger' && input.human && !input.context && input.at > report.at)
+  return !ticket.inputs.some(input => (input.kind === 'trigger' && input.human && !input.context && input.at > report.at)
+    || (input.kind === 'owner-answer' && input.at >= report.at))
 }

@@ -399,6 +399,23 @@ export class Tickets extends EnginePart {
     this.addInput(ticket, { id: key('input', ticketId, 'note', at, text), kind: 'note', text, at })
     return this.require(ticketId)
   }
+  /** Records the account owner's answer to the current question and delivers it to the worker. */
+  answerOwner(ticketId: string, attentionId: string, text: string): Ticket {
+    const ticket = this.require(ticketId)
+    if (!liveTicket(ticket)) throw new UserError('ticketEnded')
+    const id = key('owner-answer', ticketId, attentionId)
+    const prior = ticket.inputs.find(input => input.id === id)
+    if (prior) {
+      if (prior.kind !== 'owner-answer' || prior.text !== text) throw new UserError('attentionChanged')
+      return ticket
+    }
+    const attention = ticket.attention
+    if (!attention || attention.id !== attentionId || attention.target === 'requester') throw new UserError('attentionChanged')
+    delete ticket.attention
+    this.replies.withdrawAttention(attentionId)
+    this.addInput(ticket, { id, kind: 'owner-answer', attentionId, question: attention.question, text, at: this.now() })
+    return this.require(ticketId)
+  }
   /**
    * Subscribe an open ticket to a Thread its Executor found related, for context: see `Thread.context`.
    * @returns false when the ticket follows the Thread already.

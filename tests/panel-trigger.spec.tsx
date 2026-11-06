@@ -13,7 +13,7 @@ it('walks a Thread timeline newest first with dispositions as tags and its Decis
   expect(document.querySelector('.dt-ticket .dt-stage')?.textContent).toBe(zh.threadSubscribed)
   expect(text()).toContain('扇出给 修复回归')
   await click('这个文案好奇怪')
-  expect(document.querySelector('.dt-page-head .dt-btn')?.textContent).toBe(zh['term.trigger'])
+  expect(document.querySelector('.dt-page-head .dt-btn')?.textContent).toBe(zh['tab.trigger'])
   expect(text()).not.toContain('扇出到 1 个工单')
   expect(text()).toContain('已过滤：发送者不在这个来源的名单里')
   expect(text()).toContain(zh['term.correlation'])

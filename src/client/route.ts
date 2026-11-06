@@ -47,13 +47,14 @@ export function parseRoute(value: unknown): Route | undefined {
 }
 
 const ROUTE_KEY = 'dsh-superagent/route'
-/** The address hash a desktop notification opens a ticket by: `#superagent=execution/<ticket id>`. */
-const LINK = /^#superagent=execution\/([A-Za-z0-9_-]+)$/
-/** The ticket an address names, which then leaves the address so a reload does not open it again. */
-export function linkedTicket(): string | undefined {
-  const id = LINK.exec(location.hash)?.[1]
-  if (id) history.replaceState(null, '', location.pathname + location.search)
-  return id
+/** A launcher opens the overview; a desktop notification can instead name a ticket. */
+const TICKET_LINK = /^#superagent=execution\/([A-Za-z0-9_-]+)$/
+export function linkedLocation(): Location | undefined {
+  const id = TICKET_LINK.exec(location.hash)?.[1]
+  const linked: Location | undefined = location.hash === '#superagent=overview' ? { route: HOME, stack: [] }
+    : id ? { route: { page: 'execution', id }, stack: [{ page: 'execution' }] } : undefined
+  if (linked) history.replaceState(null, '', location.pathname + location.search)
+  return linked
 }
 export interface Location { route: Route; stack: Route[]; group?: SettingsGroup | undefined }
 export const lastSettingsGroup = ({ route, group }: Location): SettingsGroup => route.page === 'settings' ? route.query.group

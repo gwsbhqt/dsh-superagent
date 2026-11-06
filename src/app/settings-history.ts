@@ -6,7 +6,7 @@ import type { Store, SettingsVersion } from './store.ts'
 
 type SourceSettings = SettingsVersion['settings']['sources'][string]
 /** Change codes localized by the web panel as `change.<code>`. */
-export type SettingsChangeCode = 'ruleAdded' | 'ruleRenamed' | 'ruleInstruction' | 'ruleEnabled' | 'ruleDisabled' | 'ruleRemoved'
+export type SettingsChangeCode = 'ruleAdded' | 'ruleRenamed' | 'ruleInstruction' | 'ruleNoSourceReply' | 'ruleNoExternalReply' | 'ruleEnabled' | 'ruleDisabled' | 'ruleRemoved'
   | 'sourceEnabled' | 'sourceDisabled' | 'sourceField' | 'sourceRowsAdded' | 'sourceRowsRemoved' | 'sourceRowsChanged' | 'sourceAdmission'
   | 'mode' | 'timeout' | 'evalModel' | 'executorModel' | 'executorLightModel' | 'maxWorkers' | 'paused' | 'resumed' | 'executionDirectory' | 'prepareCommand'
   | 'blockedCommands'
@@ -51,6 +51,8 @@ function settingsChanges(before: SettingsVersion['settings'], after: SettingsVer
     if (!old) { changes.push({ code: 'ruleAdded', name: rule.name }); continue }
     if (old.name !== rule.name) changes.push({ code: 'ruleRenamed', from: old.name, to: rule.name })
     if (old.instruction !== rule.instruction) changes.push({ code: 'ruleInstruction', name: rule.name })
+    if (!!old.noSourceReply !== !!rule.noSourceReply) changes.push({ code: 'ruleNoSourceReply', name: rule.name })
+    if (!!old.noExternalReply !== !!rule.noExternalReply) changes.push({ code: 'ruleNoExternalReply', name: rule.name })
     if (old.enabled !== rule.enabled) changes.push({ code: rule.enabled ? 'ruleEnabled' : 'ruleDisabled', name: rule.name })
   }
   for (const rule of before.policy.rules) if (!after.policy.rules.some(item => item.id === rule.id)) changes.push({ code: 'ruleRemoved', name: rule.name })

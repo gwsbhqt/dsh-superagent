@@ -108,6 +108,21 @@ it('links a question to its Channel, folds consecutive automated messages among 
   expect(document.querySelector('[role="tooltip"]')).toBeNull()
 })
 
+it('lets the account owner answer a lark question without returning to the alert chat', async () => {
+  const t1 = server.ticketDetails.t1!
+  server.ticketDetails.t1 = { ...t1, stage: 'person', action: 'answer', attention: { id: 'owner-q', question: '请开通权限' },
+    channels: [{ ...t1.channels[0]!, source: 'lark-desktop' }] }
+  at({ page: 'execution', id: 't1' })
+  await mount()
+  expect(text()).toContain(zh.answerOwnerHint)
+  expect(all('.dt-banner a')).toHaveLength(0)
+  await type(field<HTMLTextAreaElement>(zh.answerOwnerLabel), '已经开通')
+  await click(zh.answerOwnerSend)
+  expect(server.requests).toContainEqual(expect.objectContaining({ path: 'tickets/t1/answer', method: 'POST',
+    body: { attentionId: 'owner-q', text: '已经开通' } }))
+  expect(server.ticketDetails.t1!.attention).toBeUndefined()
+})
+
 it('offers a Ticket awaiting review its review place and Session in the page head', async () => {
   const t1 = server.ticketDetails.t1!
   server.ticketDetails.t1 = { ...t1, stage: 'person', action: 'review', threads: [threadSummary(),
